@@ -1,13 +1,12 @@
+// Fill out your copyright notice in the Description page of Project Settings.
+
+
 #include "QPPickupWidget.h"
 #include "Blueprint/WidgetLayoutLibrary.h"
 void UQPPickupWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime); // 부모 클래스의 틱 함수 호출
-	if (!IsValid(TargetActor)) {
-		TargetActor = nullptr; // 유효하지 않은 타겟은 nullptr로 설정
-		SetVisibility(ESlateVisibility::Hidden); // 위젯 숨기기
-		return;
-	}
+	if (!TargetActor) return;// 타겟 액터가 없으면 반환
 	APlayerController* PlayerController = GetOwningPlayer(); //플레이어 컨트롤러 가져오기
 	if (!PlayerController) return;// 소유한 플레이어 컨트롤러 가져오기
 	FVector2D ScreenPosition; // 화면 위치 변수

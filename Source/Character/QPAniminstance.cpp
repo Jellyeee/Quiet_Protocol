@@ -40,6 +40,13 @@ void UQPAniminstance::NativeUpdateAnimation(float DeltaSeconds)
 	bIsAiming = Character->IsAiming(); //조준하고 있는지 여부 업데이트
 	bIsTurningInPlace = Character->IsTurningInPlace(); //제자리 회전 중인지 여부 업데이트
 
+	if (Character->IsDead()) 
+	{
+		bUseLeftHandIK = false;
+		bIsAiming = false;
+		bIsAttacking = false;
+		bIsTurningInPlace = false;
+	}
 	if (Speed > 0.f) //움직임 방향 계산
 	{
 		const FVector Velocity = Character->GetVelocity();
@@ -112,7 +119,9 @@ void UQPAniminstance::NativeUpdateAnimation(float DeltaSeconds)
 		AO_Yaw = FMath::Clamp(SmoothedDeltaYaw, -90.f, 90.f);
 		// AO_Pitch 계산 (기존 유지)
 		FRotator DeltaRot = UKismetMathLibrary::NormalizedDeltaRotator(SmoothedControlRotation, Character->GetActorRotation());
-		AO_Pitch = FMath::Clamp(FRotator::NormalizeAxis(DeltaRot.Pitch), -90.f, 90.f);
+		float Pitch = FRotator::NormalizeAxis(DeltaRot.Pitch);
+		bool bIsHoldingGun = (WeaponType == EQPWeaponType::EWT_Rifle || WeaponType == EQPWeaponType::EWT_Shotgun || WeaponType == EQPWeaponType::EWT_Handgun);
+		AO_Pitch = bIsHoldingGun ? FMath::Clamp(Pitch, -30.f, 40.f) : FMath::Clamp(Pitch, -90.f, 90.f);
 	}
 
 	// ================= IK (왼손 보정) =================

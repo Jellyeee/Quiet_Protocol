@@ -6,8 +6,10 @@
 #include "AIController.h"
 #include "ZombieAIController.generated.h"
 
+class UBehaviorTree;
+
 /**
- * 
+ *
  */
 UCLASS()
 class PJ_QUIET_PROTOCOL_API AZombieAIController : public AAIController

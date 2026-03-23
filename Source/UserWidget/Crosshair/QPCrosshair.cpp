@@ -26,6 +26,12 @@ void AQPCrosshair::DrawHUD()
 	APawn* Pawn = GetOwningPawn();
 	if (Pawn)
 	{
+		AQPCharacter* Character = Cast<AQPCharacter>(Pawn);
+		if (Character && Character->IsDead())
+		{
+			return; // 사망 시 크로스헤어 비활성화
+		}
+
 		FVector Velocity = Pawn->GetVelocity(); 
 		Velocity.Z = 0.f; // 수직 속도는 확산 계산에서 제외 (수평 이동만 고려)
 		float Speed = Velocity.Size(); // 이동 속도 계산
@@ -39,11 +45,10 @@ void AQPCrosshair::DrawHUD()
 		}
 
 		float AimingSpread = 0.f; // 조준 시 확산 감소 계산
-		if (AQPCharacter* Character = Cast<AQPCharacter>(Pawn)) 
+		if (Character) 
 		{
 			if (Character->IsAiming())
 			{
-
 				VelocitySpread *= 0.1f; 
 				InAirSpread *= 0.1f;    
 			}

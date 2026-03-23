@@ -94,25 +94,25 @@ protected:
 	void TraceUnderCrosshairs(FHitResult& TraceHitResult); //조준선 아래 충돌 검사 함수
 
 	UFUNCTION(Server, Reliable)
-	void ServerSetAiming(bool bNewAiming);
+	void ServerSetAiming(bool bNewAiming); //조준 상태 서버에 알리는 함수 (네트워크 동기화용)
 
 	UFUNCTION(Server, Reliable)
-	void ServerStartAttack();
+	void ServerStartAttack(); //공격 시작 서버에 알리는 함수 (네트워크 동기화용)
 
 	UFUNCTION(Server, Reliable)
-	void ServerStopAttack();
+	void ServerStopAttack(); //공격 중지 서버에 알리는 함수 (네트워크 동기화용)
 
 	UFUNCTION(Server, Reliable)
-	void ServerReload();
+	void ServerReload(); // 재장전 서버에 알리는 함수 (네트워크 동기화용)
 
 	UFUNCTION(NetMulticast, Unreliable)
-	void MulticastReload();
+	void MulticastReload(); // 재장전 애니메이션/이펙트 동기화용 함수 (모든 클라이언트에서 재장전 효과 재생)
 
 	UFUNCTION(Server, Unreliable)
-	void ServerSetHitTarget(const FVector_NetQuantize& TraceHitTarget_Arg);
+	void ServerSetHitTarget(const FVector_NetQuantize& TraceHitTarget_Arg); // 서버에 HitTarget을 알리는 함수 (네트워크 최적화용, Unreliable로 설정)
 
 	UFUNCTION(NetMulticast, Unreliable)
-	void MulticastFire(bool bInIsAiming);
+	void MulticastFire(bool bInIsAiming); // 발사 효과 동기화용 함수 (모든 클라이언트에서 발사 효과 재생, Unreliable로 설정)
 
 public:
 	UFUNCTION(Server, Reliable)
@@ -121,9 +121,8 @@ public:
 	FVector HitTarget; // 실제 총구가 가리키는 위치 (로컬에서 계산, 서버/클라이언트에서 TraceHitTarget과 동기화)
 
 protected:
-	// [Network] 서버로부터 복제되는 원본 값
 	UPROPERTY(Replicated)
-	FVector TraceHitTarget;
+	FVector TraceHitTarget; // 실제 총구가 가리키는 위치 (서버에서 계산, 클라이언트로 복제)
 
 private:
 	bool AttachWeaponToCharacter(AWeaponBase* Weapon); //캐릭터에 무기 부착 함수
@@ -164,6 +163,8 @@ private:
 
 	double LastFireTime = 0.0; // 마지막 발사 시간 (발사 간격 제어용)
 	bool CanFire(bool bAutomatic);  // 발사 가능 여부 체크 함수 (자동/비자동 무기 구분)
+	
+	bool bCanFireSingleShot = true; // 단발 무기를 누르고 있을 때 연속 발사를 막기 위한 플래그
 
 
 	// Crosshair Offsets (Hip-Fire)

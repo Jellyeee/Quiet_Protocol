@@ -6,7 +6,7 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
-
+#include "Kismet/GameplayStatics.h"
 AQPProjectileBullet::AQPProjectileBullet()
 {
 	PrimaryActorTick.bCanEverTick = true;
@@ -40,13 +40,14 @@ void AQPProjectileBullet::SetBulletVelocity(const FVector& Direction, float Spee
 void AQPProjectileBullet::BeginPlay()
 {
 	Super::BeginPlay();
+	BulletCollision->OnComponentHit.AddDynamic(this, &AQPProjectileBullet::OnHit);
 	PrevLocation = GetActorLocation(); //이전 위치 초기화
-	if(AActor* OwnerActor = GetOwner())
+	if (AActor* OwnerActor = GetOwner())
 	{
 		//총알이 소유자와 충돌하지 않도록 설정
 		BulletCollision->IgnoreActorWhenMoving(OwnerActor, true); //소유자 무시
 	}
-	if(APawn* InstigatorPawn = GetInstigator())
+	if (APawn* InstigatorPawn = GetInstigator())
 	{
 		//총알이 인스티게이터와 충돌하지 않도록 설정
 		BulletCollision->IgnoreActorWhenMoving(InstigatorPawn, true); //인스티게이터 무시
@@ -56,7 +57,7 @@ void AQPProjectileBullet::BeginPlay()
 		TrailFXComponent = UNiagaraFunctionLibrary::SpawnSystemAttached(TrailFX, RootComponent, NAME_None, FVector::ZeroVector, FRotator::ZeroRotator,
 			EAttachLocation::SnapToTarget, true, true, ENCPoolMethod::AutoRelease, true);  //트레일 이펙트 생성 및 부착
 	}
-	if (TrailFXComponent) { 
+	if (TrailFXComponent) {
 		TrailFXComponent->SetWorldScale3D(TrailFXScale);  //트레일 이펙트 스케일 설정
 		bDebugDrawTracer = false;
 	}
@@ -71,4 +72,17 @@ void AQPProjectileBullet::Tick(float DeltaTime)
 		PrevLocation = CurrentLocation; //이전 위치 업데이트
 	}
 }
+
+void AQPProjectileBullet::OnHit(UPrimitiveComponent* HitComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit)
+{
+	AActor* MyOwner = GetOwner();
+
+	if (OtherActor && OtherActor != this && OtherActor != MyOwner)
+	{
+		const FVector Dir = GetVelocity().GetSafeNormal();
+		UGameplayStatics::ApplyPointDamage(OtherActor, Damage, Dir, Hit, GetInstigatorController(), this, DamageTypeClass);
+	}
+	Destroy();
+}
+
 

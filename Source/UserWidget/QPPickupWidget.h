@@ -7,13 +7,13 @@
 #include "QPPickupWidget.generated.h"
 
 /**
- * 
+ *
  */
 UCLASS()
 class PJ_QUIET_PROTOCOL_API UQPPickupWidget : public UUserWidget
 {
 	GENERATED_BODY()
-	
+
 public:
 	UFUNCTION(BlueprintCallable, Category = "UI|Pickup")
 	void SetTargetActor(AActor* NewTarget) { TargetActor = NewTarget; } // 타겟 액터 설정 함수

@@ -17,7 +17,7 @@ EBTNodeResult::Type UBTTask_SetRandomWanderLocation::ExecuteTask(UBehaviorTreeCo
 	AAIController* AIController = OwnerComp.GetAIOwner(); //AI 컨트롤러 가져오기
 	APawn* Pawn = AIController ? AIController->GetPawn() : nullptr; //AI 컨트롤러의 폰 가져오기
 	UBlackboardComponent* BlackboardComponent = OwnerComp.GetBlackboardComponent(); //블랙보드 컴포넌트 가져오기
-	if(!AIController || !Pawn || !BlackboardComponent) 
+	if (!AIController || !Pawn || !BlackboardComponent)
 	{
 		return EBTNodeResult::Failed; //유효성 검사 실패 시 실패 반환
 	}
@@ -29,7 +29,7 @@ EBTNodeResult::Type UBTTask_SetRandomWanderLocation::ExecuteTask(UBehaviorTreeCo
 	FNavLocation OutLocation; //네비게이션 위치 변수
 	bool bFound = false; //위치 발견 여부 변수
 
-	for(int32 i=0; i<MaxTries; ++i) //최대 시도 횟수만큼 반복
+	for (int32 i = 0; i < MaxTries; ++i) //최대 시도 횟수만큼 반복
 	{
 		//네비게이션 시스템을 사용해 원점 주변의 랜덤 위치 찾기
 		if (NavSys->GetRandomPointInNavigableRadius(Origin, WanderRadius, OutLocation))

@@ -7,13 +7,13 @@
 #include "ZombieAnimInstance.generated.h"
 
 /**
- * 
+ *
  */
 UCLASS()
 class PJ_QUIET_PROTOCOL_API UZombieAnimInstance : public UAnimInstance
 {
 	GENERATED_BODY()
-	
+
 public:
 	virtual void NativeUpdateAnimation(float DeltaSeconds) override; //애니메이션 업데이트 재정의
 	virtual void NativeInitializeAnimation() override; //애니메이션 초기화 재정의
@@ -28,7 +28,7 @@ public:
 	float MovementSpeed = 0.f;
 	//공격중(공격 몽타주 상태)
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Zombie|Animation")
-	bool bIsAttacking = false; 
+	bool bIsAttacking = false;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Anim")
 	float SmoothedSpeed = 0.f; //부드러운 이동 속도
 

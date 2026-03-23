@@ -5,7 +5,7 @@
 #include "BTTask_SetRandomWanderLocation.generated.h"
 
 /**
- * 
+ *
  */
 UCLASS()
 class PJ_QUIET_PROTOCOL_API UBTTask_SetRandomWanderLocation : public UBTTask_BlackboardBase

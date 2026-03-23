@@ -9,6 +9,9 @@
 AMeleeWeapon::AMeleeWeapon()
 {
 	WeaponType = EQPWeaponType::EWT_Melee; //무기 타입을 근접 무기로 설정
+	bAutomatic = false; // 근접 공격은 꾹 눌러도 연속 공격이 나가지 않도록 설정
+	FireRate = 1.25f; // 근접 공격 연사 간격(쿨타임) 설정 - 애니메이션이 끝나기 전까지 다시 공격하지 못하도록 딜레이 적용
+	BaseDamage = 40.f; // 기본 데미지 설정
 }
 
 void AMeleeWeapon::StartFire_Implementation() //공격 시작 함수 재정의
@@ -22,7 +25,7 @@ void AMeleeWeapon::StartFire_Implementation() //공격 시작 함수 재정의
 	Params.AddIgnoredActor(OwnerCharacter); //소유자 무시
 	TArray<FHitResult> HitResults; //히트 결과 배열
 	const bool bHit = GetWorld()->SweepMultiByChannel(HitResults, Start, End, FQuat::Identity, ECC_Pawn, FCollisionShape::MakeSphere(SwingRadius), Params); //스윕 수행
-	DrawDebugSphere(GetWorld(), End, SwingRadius, 12, FColor::Green, false, 0.35f); //디버그 스피어 그리기
+	// DrawDebugSphere(GetWorld(), End, SwingRadius, 12, FColor::Green, false, 0.35f); //디버그 스피어
 	if (!bHit) return;	//히트하지 않았으면 반환
 	for (const FHitResult& Hit : HitResults)//히트 결과 반복
 	{
@@ -32,5 +35,5 @@ void AMeleeWeapon::StartFire_Implementation() //공격 시작 함수 재정의
 			this, DamageTypeClass); //데미지 적용
 		break; //첫 번째 히트한 액터에만 데미지 적용 후 종료
 	}
-	
+
 }

@@ -50,7 +50,7 @@ void AZombieSpawner::TickSpawn() //스폰 틱 함수
 
 	if (MaxAlive <= 0) return; //최대 생존 좀비 수가 0 이하이면 반환
 	if (AliveZombies.Num() >= MaxAlive) return; //현재 생존 좀비
-	
+
 	const TSubclassOf<AZombieCharacter> PickedClass = PickZombieClassWeighted(); //가중치 기반 좀비 클래스 선택
 	if (!PickedClass) return; //선택된 클래스가 없으면 반환
 

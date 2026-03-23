@@ -3,7 +3,7 @@
 #include "BehaviorTree/BlackboardComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "PJ_Quiet_Protocol/Character/Zombie/ZombieCharacter.h"
-#include "PJ_Quiet_Protocol/Commons/DefineCommons.h"
+//#include "PJ_Quiet_Protocol/Commons/DefineCommons.h"
 
 UBTTask_ZombieStartAttack::UBTTask_ZombieStartAttack()
 {
@@ -21,20 +21,20 @@ EBTNodeResult::Type UBTTask_ZombieStartAttack::ExecuteTask(UBehaviorTreeComponen
 
 	AIController->StopMovement(); //AI 컨트롤러의 이동 정지
 	if (Zombie->GetCharacterMovement()) Zombie->GetCharacterMovement()->StopMovementImmediately(); //좀비의 이동 즉시 정지
-	DBG_SCREEN(
-		2001, 1.0f, FColor::Red,
-		"Task: StartAttack EXEC. Pawn=%s IsAttacking(before)=%d",
-		*GetNameSafe(Zombie),
-		Zombie->IsAttacking() ? 1 : 0
-	);
+	//DBG_SCREEN(
+	//	2001, 1.0f, FColor::Red,
+	//	"Task: StartAttack EXEC. Pawn=%s IsAttacking(before)=%d",
+	//	*GetNameSafe(Zombie),
+	//	Zombie->IsAttacking() ? 1 : 0
+	//);
 	Zombie->StartAttack(); //좀비 공격 시작
 
-	DBG_SCREEN(
-		2002, 1.0f, FColor::Red,
-		"Task: StartAttack DONE. IsAttacking(after)=%d",
-		Zombie->IsAttacking() ? 1 : 0);
+	//DBG_SCREEN(
+	//	2002, 1.0f, FColor::Red,
+	//	"Task: StartAttack DONE. IsAttacking(after)=%d",
+	//	Zombie->IsAttacking() ? 1 : 0);
 
-	if(!isAttackingKey.SelectedKeyName.IsNone()) BlackboardComponent->SetValueAsBool(isAttackingKey.SelectedKeyName, Zombie->IsAttacking()); //블랙보드에 공격중 플래그 설정
+	if (!isAttackingKey.SelectedKeyName.IsNone()) BlackboardComponent->SetValueAsBool(isAttackingKey.SelectedKeyName, Zombie->IsAttacking()); //블랙보드에 공격중 플래그 설정
 
 	return EBTNodeResult::Succeeded;
 }

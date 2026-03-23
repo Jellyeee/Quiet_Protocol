@@ -1,4 +1,5 @@
 #include "ZombieAIController.h"
+#include "BehaviorTree/BehaviorTree.h"
 
 AZombieAIController::AZombieAIController()
 {

@@ -5,8 +5,11 @@
 #include "PJ_Quiet_Protocol/Commons/QPCombatTypes.h"
 #include "QPCharacter.generated.h"
 
-class UQPCombatComponent; //전방 선언
-class AWeaponBase; //전방 선언
+class UQPStatusComponent; // 전방 선언
+class UQPCombatComponent; // 전방 선언
+class AWeaponBase; // 전방 선언
+class UInventoryComponent; // 전방 선언
+
 UCLASS()
 class PJ_QUIET_PROTOCOL_API AQPCharacter : public ACharacter
 {
@@ -27,6 +30,7 @@ public:
 		if (IsAiming() && bIsHoldingGun)
 		{
 			FVector Result = AimingCameraOffset;
+			// 조준 시에는 앉기 여부와 상관없이 AimingCameraOffset을 기본으로 사용하지만, 앉은 상태에서는 높이 보정을 추가로 적용
 			if (bIsCrouched) 
 			{
 				// 서있을 때와 앉았을 때의 높이 차이만큼 조준 시 높이도 낮춤
@@ -39,11 +43,26 @@ public:
 	} //원하는 카메라 오프셋 반환
 	UFUNCTION(BlueprintPure, Category = "Combat")
 	FORCEINLINE UQPCombatComponent* GetCombatComponent() const { return CombatComponent; } //전투 컴포넌트 반환 함수
+	UFUNCTION(BlueprintPure, Category = "Status")
+	FORCEINLINE UQPStatusComponent* GetStatusComponent() const { return StatusComponent; } //상태 컴포넌트 반환 함수
 	UFUNCTION(BlueprintPure, Category = "Combat")
 	FORCEINLINE EQPWeaponType GetWeaponType() const { return Weapontype; } //장착된 무기 타입 반환 함수
 	UFUNCTION(BlueprintPure, Category = "Combat")
 	bool IsSprinting() const; //앞으로 달리기는 중인지 반환 함수
 	bool IsAiming() const; //조준 중인지
+
+	UFUNCTION(BlueprintPure, Category = "Inventory")
+	FORCEINLINE class UInventoryComponent* GetInventoryComponent() const { return InventoryComponent; } //인벤토리 컴포넌트 반환 함수
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Pickup")
+	void SetOverlappingWorldItem(class AWorldItemActor* WorldItem); //겹쳐진 월드 아이템 설정 함수
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Pickup")
+	class AWorldItemActor* GetOverlappingWorldItem() const { return OverlappingWorldItem; } //겹쳐진 월드 아이템 반환 함수
+
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Context")
+	void EquipInventoryItemAt(const FIntPoint& Cell); //인벤토리 아이템 장착 함수
+
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Context")
+	void DropInventoryItemAt(const FIntPoint& Cell); //인벤토리 아이템 버리기 함수
 
 	FORCEINLINE float GetAO_Yaw() const { return AO_Yaw;  } // 현재 애니메이션 오프셋의 Yaw 값을 반환
 	FORCEINLINE float GetAO_Pitch() const { return AO_Pitch;  } // 현재 애니메이션 오프셋의 Pitch 값을 반환
@@ -51,6 +70,15 @@ public:
 
 	void PlayFireMontage(bool bAming); // 무기 발사 몽타주 재생 함수
 	void PlayReloadMontage(); // 재장전 몽타주 재생 함수
+
+	virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent, class AController* EventInstigator, AActor* DamageCauser) override;
+
+	UFUNCTION(BlueprintPure, Category = "Health")
+	bool IsDead() const; // 사망 여부 반환
+
+	void StopSprint(); //달리기 멈춤
+	void UpdateMovementSpeed(); //움직임 속도 업데이트
+	void Die(); // 사망 처리 함수
 
 protected:
 	virtual void BeginPlay() override;
@@ -60,6 +88,8 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
 	UQPCombatComponent* CombatComponent; //전투 컴포넌트
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Status", meta = (AllowPrivateAccess = "true"))
+	UQPStatusComponent* StatusComponent; //상태 컴포넌트
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
 	class USpringArmComponent* CameraBoom; //3인칭 플레이를 위한 스프링암 
 
@@ -71,7 +101,7 @@ protected:
 	void HandleWeaponTypeChanged(EQPWeaponType NewWeaponType); //무기 타입 변경 핸들러
 	
 	UFUNCTION()
-	void HandleAimStateChanged(bool bIsAiming); // [Fix] 조준 상태 변경 핸들러 (속도 동기화)
+	void HandleAimStateChanged(bool bIsAiming); // 조준 상태 변경 핸들러 (속도 동기화)
 
 	//움직임 속도 변수들
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
@@ -87,24 +117,39 @@ protected:
 
 	//앉기 카메라 변수들
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Crouch")
-	FVector StandingCameraOffset = FVector(0.f, 0.f, 120.f); //서있을 때 카메라 오프셋 (기본 높이 상향)
+	FVector StandingCameraOffset = FVector(0.f, 0.f, 120.f); 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Crouch")
-	FVector CrouchCameraPosOffset = FVector(0.f, 0.f, 140.f); //앉아있을 때 카메라 오프셋 (CapsuleDrop 보정, 변수명 변경으로 초기화)
+	FVector CrouchCameraPosOffset = FVector(0.f, 0.f, 140.f); 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Crouch", meta = (ClampMin = "0.0"))
-	float CrouchCameraInterpSpeed = 12.f; //카메라 위치 보간 속도
+	float CrouchCameraInterpSpeed = 12.f; 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera", meta = (ClampMin = "0.0"))
-	float CameraArmLength = 400.f; //기본 카메라 거리 (300 -> 400 시야 확보)
+	float CameraArmLength = 300.f; 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
-	float AimingArmLength = 200.f; //조준 시 카메라 거리 (150 -> 200 약간 뒤로)
-	float DefaultArmLength; //기본 카메라 거리 (저장용)
+	float AimingArmLength = 200.f; 
+	float DefaultArmLength;
+
+	// ======================================
+	// 달리기(Sprint) 이펙트 변수들
+	// ======================================
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Sprint")
+	TSubclassOf<class UCameraShakeBase> SprintCameraShakeClass; // 달리기 카메라 흔들림 클래스
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Sprint")
+	float SprintFOV = 105.f;  // 달리기 시 FOV 값 (기본값보다 넓게 설정하여 속도감 증가 효과)
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Sprint")
+	float DefaultFOV = 90.f;  // 기본 FOV 값 (달리기 시작 시와 멈출 때 원래대로 돌아가기 위한 값)
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Sprint")
+	float SprintFOVInterpSpeed = 10.f; // 달리기 시 FOV 보간 속도 (값이 클수록 빠르게 변화)
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Crouch", meta = (ClampMin = "0.0"))
-	float MinVerticalArmLength = 250.f; // 위를 볼 때 최소 거리 (줌인)
+	float MinVerticalArmLength = 250.f; // 앉기 시 카메라가 너무 가까워지는 것을 방지하기 위한 최소 스프링암 길이
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Crouch", meta = (ClampMin = "0.0"))
-	float MaxVerticalArmLength = 600.f; // 아래를 볼 때 최대 거리 (줌아웃)
+	float MaxVerticalArmLength = 600.f; // 앉기 시 카메라가 너무 멀어지는 것을 방지하기 위한 최대 스프링암 길이
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Aim")
-	FVector AimingCameraOffset = FVector(0.f, 40.f, 80.f); //조준 시 카메라 오프셋 (Y=70->40: 왼쪽으로 이동(오른쪽 치우침 완화), Z=60: 높이 조정)
+	FVector AimingCameraOffset = FVector(0.f, 40.f, 80.f);  // 조준 시 카메라 오프셋 (앞으로, 옆으로, 위로)
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Weapon", meta = (ClampMin = "0.0"))
 	float EquipTraceDistance = 250.f; //무기 장착 거리
@@ -120,10 +165,21 @@ protected:
 	void StopJump(); //점프 멈춤
 	void ToggleCrouch(); //앉기/일어서기 토글
 	void StartSprint(); //달리기 시작
-	void StopSprint(); //달리기 멈춤
-	void TryEquipWeapon(); //무기 장착 시도 함수
+
+	void EquipPressed(); //장착 버튼 눌림
+	void EquipReleased(); //장착 해제 버튼 눌림
+	void OnEquipHoldTriggered(); //장착 홀드 트리거
+	void TryEquipWeapon(); //짧게 누를때 장착	
+	void TryStorePickupToInventory(); //아이템을 인벤토리에 저장 시도
+
 	void AttackPressed(); //공격 버튼 눌림
 	void AttackReleased(); //공격 버튼 떼짐
+
+	void DropPressed(); //버리기 버튼 눌림
+	void DropReleased(); //버리기 버튼 떼짐
+	void OnDropHoldTriggered(); //버리기 홀드 트리거
+	void TryDropEquipped(); //실제 드랍 실행 로직 함수
+
 	void AimButtonPressed(); //조준 버튼 눌림
 	void AimButtonReleased(); //조준 버튼 떼짐
 	void ReloadButtonPressed(); //재장전 버튼 눌림
@@ -140,8 +196,16 @@ private:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 private:
-	void UpdateMovementSpeed(); //움직임 속도 업데이트
+	void UpdateCameraDynamics(float DeltaTime);
+	void UpdateDeathCamera(float DeltaTime);
+	void UpdateRotationMode();
 	
+	// 사망 시 관전 카메라 이동 처리
+	void HandleDeathCameraInput(FVector MoveDirection, float Value);
+
+	void UpdatePickupWidgetTarget(); //픽업 위젯 타겟 업데이트 함수
+	void RefreshPickupCandidate(const AActor* ActorToIgnore = nullptr); //발밑에 남아있는 픽업 대상을 재탐색해서 타겟 복구
+
 	UPROPERTY(ReplicatedUsing = OnRep_IsSprinting) // [Network] Sprint 상태 동기화 (OnRep 추가)
 	bool bWantsToSprint = false; //달리기 의사 여부
 	
@@ -162,8 +226,40 @@ private:
 	UPROPERTY(Replicated) // [Network] 절대 조준 Yaw 값 (For Stable IK)
 	float NetAimYaw; 
 
+	UPROPERTY(Replicated) // [Network] 절대 조준 Yaw 값 (For Stable IK)
+	float NetAimYaw; 
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory", meta = (AllowPrivateAccess = "true"))
+	float EquipHoldThreshhold = 0.30f; //E를 이 시간 이상 누르면 인벤토리 저장
+	FTimerHandle EquipHoldTimerHandle; //장착 홀드 타이머 핸들
+	bool bEquipKeyDown = false; //장착 키가 눌려있는지 여부
+	bool bEquipHoldConsumed = false; //홀드로 이미 처리 했는지 확인 불리언 값
+
+	UPROPERTY(EditAnywhere, BlueprintReadonly, Category = "Inventory", meta = (AllowPrivateAccess = "true"))
+	float DropHoldThreshhold = 0.30f; //G를 이 시간 이상 누르면 드랍
+	
+	FTimerHandle DropHoldTimerHandle; //드랍 홀드 타이머 핸들
+	bool bDropKeyDown = false; //드랍 키가 눌려있는지 여부
+	bool bDropHoldConsumed = false; //홀드로 이미 처리 했는지 확인 불리언 값
+
 public:
 	FORCEINLINE float GetNetAimYaw() const { return NetAimYaw; }
 
 	int32 MeleeAttackIndex = 0; // 근접 공격 콤보 인덱스
+
+	// 사망 후 카메라 전환
+	bool bIsDeathCameraTransitioning = false;
+	float DeathCameraTargetArmLength = 1000.f; // 사망 시 카메라가 목표로 하는 스프링암 길이
+	FRotator DeathCameraTargetRotation = FRotator(-90.f, 0.f, 0.f); // 목표 회전각 (위에서 아래로)
+	
+	// 목표 위치 도달 확인 후 자유시점 활성화를 위함
+	bool bIsDeathCameraFreeMode = false;
+	
+	UPROPERTY(EditDefaultsOnly, Category = "Health")
+	UAnimMontage* DeathMontage; // 사망 몽타주
+
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastDie(); // 사망 처리 전송 함수
+
+protected:
 };

@@ -1,4 +1,4 @@
-﻿#include "PJ_Quiet_Protocol/Character/QPCharacter.h"
+#include "PJ_Quiet_Protocol/Character/QPCharacter.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -12,6 +12,11 @@
 #include "DrawDebugHelpers.h" 
 #include "PJ_Quiet_Protocol/Character/QPAniminstance.h"
 #include "Camera/PlayerCameraManager.h"
+#include "PJ_Quiet_Protocol/Character/Components/QPStatusComponent.h"
+#include "PJ_Quiet_Protocol/GameMode/QPGameMode.h"
+#include "PJ_Quiet_Protocol/Inventory/InventoryComponent.h"
+#include "PJ_Quiet_Protocol/Inventory/WorldItemActor.h"
+#include "PJ_Quiet_Protocol/Inventory/InventoryHeaders/InventoryItem.h"
 
 AQPCharacter::AQPCharacter()
 {
@@ -46,6 +51,112 @@ AQPCharacter::AQPCharacter()
 	//컴뱃 컴포넌트
 	CombatComponent = CreateDefaultSubobject<UQPCombatComponent>(TEXT("CombatComponent")); //전투 컴포넌트 생성
 
+	//상태 컴포넌트
+	StatusComponent = CreateDefaultSubobject<UQPStatusComponent>(TEXT("StatusComponent")); //상태 컴포넌트 생성
+
+	InventoryComponent = CreateDefaultSubobject<UInventoryComponent>(TEXT("InventoryComponent")); //인벤토리 컴포넌트 생성
+
+	SetNetUpdateFrequency(100.f); // [Network] 업데이트 빈도 상향 (66 -> 100)
+	SetMinNetUpdateFrequency(66.f); // [Network] 최소 빈도 상향 (33 -> 66)
+
+	// [Network] 먼 거리에서도 애니메이션 생략 없이 갱신 (부드러운 동작 보장)
+	GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+}
+
+void AQPCharacter::SetOverlappingWorldItem(AWorldItemActor* WorldItem)
+{
+	if (OverlappingWorldItem == WorldItem)
+	{
+		UpdatePickupWidgetTarget();
+		return;
+	}
+
+	OverlappingWorldItem = WorldItem;
+	UpdatePickupWidgetTarget();
+}
+
+void AQPCharacter::EquipInventoryItemAt(const FIntPoint& Cell)
+{
+	if (!InventoryComponent || !CombatComponent) return; //인벤토리 컴포넌트나 전투 컴포넌트가 없으면 함수 종료
+
+	FInventorySlot Slot; //인벤토리 슬롯 변수 선언
+	if (!InventoryComponent->FindSlotContaining(Cell, Slot)) return; //해당 셀에 아이템이 없으면 함수 종료
+	if (!Slot.Item.ItemData) return; //아이템 데이터가 없으면 함수 종료
+
+	// 무기 아이템만 장착 처리
+	if (Slot.Item.ItemData->ItemType != EItemType::EIT_Weapon) return; //아이템 타입이 무기가 아니면 함수 종료
+	if (!Slot.Item.ItemData->WeaponClass) return; //무기 클래스가 없으면 함수 종료
+
+	//기존 장착 무기 드랍 없이 해제
+	if (CombatComponent->HasWeapon()) //기존에 장착된 무기가 있으면
+	{
+		CombatComponent->UnEquipWeapon(true); //장착 해제
+	}
+
+	FActorSpawnParameters Params; //액터 스폰 파라미터 설정
+	Params.Owner = this; //소유자 설정
+	Params.Instigator = this; //인스티게이터 설정
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn; //충돌 처리 방법 설정
+
+	AWeaponBase* NewWeapon = GetWorld()->SpawnActor<AWeaponBase>(Slot.Item.ItemData->WeaponClass, Params); //무기 액터 스폰
+	if (!NewWeapon) return; //무기 스폰 실패 시 함수 종료
+
+	// 장착 성공 시 인벤에서 제거
+	if (CombatComponent->EquipWeapon(NewWeapon, false)) //무기 장착 시도
+	{
+		InventoryComponent->RemoveItemAt(Slot.Position); //인벤토리에서 아이템 제거
+	}
+	else //장착 실패 시 스폰된 무기 파괴
+	{
+		NewWeapon->Destroy(); //무기 액터 파괴
+	} //장착 성공 시 인벤에서 제거
+}
+
+void AQPCharacter::DropInventoryItemAt(const FIntPoint& Cell)
+{
+	if (!InventoryComponent) return; // 인벤 컴포넌트가 없으면 종료
+
+	FInventorySlot Slot; // 슬롯 데이터
+	if (!InventoryComponent->FindSlotContaining(Cell, Slot)) return; // 해당 셀에 아이템이 없으면 종료
+	if (!Slot.Item.ItemData) return; // 아이템 데이터가 없으면 종료
+
+	UItemDataAsset* ItemData = Slot.Item.ItemData;
+	const int32 Quantity = Slot.Item.Quantity;
+	FVector DropLoc = GetActorLocation() + GetActorForwardVector() * 150.f; // 기본 드랍 위치는 캐릭터 앞
+	//가끔 마우스 위치로 드랍되던 버그 수정
+	const float HalfHeight = (GetCapsuleComponent()) ? GetCapsuleComponent()->GetScaledCapsuleHalfHeight() : 88.f; //캡슐 반높이 가져오기
+	const FVector TraceStart = DropLoc + FVector(0.f, 0.f, HalfHeight); //트레이스 시작 위치
+	const FVector TraceEnd = DropLoc - FVector(0.f, 0.f, HalfHeight + 2.5f); //트레이스 끝 위치
+
+	FHitResult GroundHit; //지면 히트 결과
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(InventoryDrop), false, this); //충돌 쿼리 파라미터 설정
+	Params.AddIgnoredActor(this); //자기 자신 무시
+
+	if (UWorld* World = GetWorld()) //월드 가져오기
+	{
+		if (World->LineTraceSingleByChannel(GroundHit, TraceStart, TraceEnd, ECC_Visibility, Params)) //라인 트레이스 수행
+		{
+			DropLoc = GroundHit.Location + FVector(0.f, 0.f, 20.f); //히트 위치 위로 약간 올려서 드랍
+		}
+		else //트레이스 실패 시 기본 위치 사용
+		{
+			DropLoc = TraceStart; //기본 드랍 위치 설정
+		}
+	}
+	// 무기면 무기 액터로 드랍
+	if (ItemData->ItemType == EItemType::EIT_Weapon && ItemData->WeaponClass) //무기 클래스가 있으면
+	{
+		FActorSpawnParameters SpawnParams; //액터 스폰 파라미터 설정
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn; //충돌 처리 방법 설정
+		SpawnParams.Owner = nullptr; //소유자 없음
+		SpawnParams.Instigator = nullptr; //인스티게이터 없음
+
+		GetWorld()->SpawnActor<AWeaponBase>(ItemData->WeaponClass, DropLoc, FRotator::ZeroRotator, SpawnParams); //무기 액터 스폰
+
+		InventoryComponent->RemoveItemAt(Slot.Position); //인벤토리에서 아이템 제거
+		return; //무기 드랍 후 함수 종료
+	}
+
 	SetNetUpdateFrequency(100.f); // [Network] 업데이트 빈도 상향 (66 -> 100)
 	SetMinNetUpdateFrequency(66.f); // [Network] 최소 빈도 상향 (33 -> 66)
 
@@ -56,6 +167,7 @@ AQPCharacter::AQPCharacter()
 void AQPCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+
 	if (CombatComponent)
 	{
 		CombatComponent->OnWeaponTypeChanged.AddDynamic(this, &AQPCharacter::HandleWeaponTypeChanged); //무기 타입 변경 이벤트 바인딩
@@ -78,14 +190,20 @@ void AQPCharacter::BeginPlay()
 	}
 
 	UpdateMovementSpeed(); //움직임 속도 업데이트
+
+	if (FollowCamera)
+	{
+		DefaultFOV = FollowCamera->FieldOfView; //기본 FOV 저장
+	}
 	
 	// 카메라 상하 회전 각도 제한
 	if (APlayerController* PlayerController = Cast<APlayerController>(GetController()))
 	{
 		if (PlayerController->PlayerCameraManager)	
 		{
-			PlayerController->PlayerCameraManager->ViewPitchMin = -60.f; // 위를 보는 한계 (올려다봄)
-			PlayerController->PlayerCameraManager->ViewPitchMax = 60.f;  // 아래를 보는 한계 (내려다봄) - 머리 위까지만
+			bool bIsHoldingGun = (Weapontype == EQPWeaponType::EWT_Rifle || Weapontype == EQPWeaponType::EWT_Shotgun || Weapontype == EQPWeaponType::EWT_Handgun);
+			PlayerController->PlayerCameraManager->ViewPitchMin = bIsHoldingGun ? -30.f : -60.f; // 위를 보는 한계 (올려다봄)
+			PlayerController->PlayerCameraManager->ViewPitchMax = bIsHoldingGun ? 40.f : 60.f;  // 아래를 보는 한계 (내려다봄) - 머리 위까지만
 		}
 	}
 }
@@ -93,24 +211,444 @@ void AQPCharacter::BeginPlay()
 void AQPCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-	if (CameraBoom && CrouchCameraInterpSpeed > 0.f)
+
+	// 1. 카메라 줌, 피벗, 오프셋 변경
+	UpdateCameraDynamics(DeltaTime);
+
+	// 2. 사망 시 카메라 화면 연출 (위에서 아래로 보는 뷰)
+	UpdateDeathCamera(DeltaTime);
+
+	// 3. 이동 및 무기에 따른 캐릭터 지향(Rotation) 방식 결정 로직
+	UpdateRotationMode();
+
+	// 4. 에임 오프셋 (조준 방향에 따른 상체 회전 보간) 등 처리
+	AimOffset(DeltaTime); 
+
+	UpdatePickupWidgetTarget();
+
+	if (HasAuthority() || IsLocallyControlled())
 	{
-		FVector DesiredOffset = GetDesiredCameraOffset(); // 현재 자세에 따른 원하는 카메라 오프셋 계산 (서있을 때 vs 앉아있을 때)
-		float TargetArmLength = DefaultArmLength; // 기본 거리 (조준 여부와 관계없이 총을 들었을 때 적용)
-		FVector TargetOffset = FVector::ZeroVector; // 카메라 피벗 위치 조정 (기본값은 캐릭터 위치)
-		FRotator TargetRelRot = FRotator::ZeroRotator; // 카메라 상대 회전 (Pitch 조정용, 기본값은 회전 없음)
-
-		// '총'을 들고 있는 경우 (조준 여부 무관하게 드론 뷰 적용)
-		bool bIsHoldingGun = (Weapontype == EQPWeaponType::EWT_Rifle || Weapontype == EQPWeaponType::EWT_Shotgun || Weapontype == EQPWeaponType::EWT_Handgun);
-		if (bIsHoldingGun) // 총을 들고 있는 경우 (조준 여부 무관하게 드론 뷰 적용)
+		// 체력 및 스태미나 디버그 메시지 화면 출력 (로컬 기준)
+		if (GEngine && IsLocallyControlled() && StatusComponent)
 		{
-			float BaseArmLength = (IsAiming() ? AimingArmLength : DefaultArmLength) - 50.f; // 총을 들었을 때는 기본 거리에서 50cm 가까이 (Zoom In) - 조준 여부에 따라 기본 거리 조정 후 추가로 줌인
-			TargetArmLength = BaseArmLength; // 총을 들었을 때는 기본 거리에서 50cm 가까이 (Zoom In) - 조준 여부에 따라 기본 거리 조정 후 추가로 줌인
+			// 멀티플레이 시 디버그 메시지가 서로 덮어씌워지지 않도록 고유 키 부여
+			int32 UID = GetUniqueID() % 1000;
+			
+			// 스태미나 출력 (UID + 10)
+			GEngine->AddOnScreenDebugMessage(UID + 10, 0.f, FColor::Cyan, FString::Printf(TEXT("[%s] Stamina: %.1f / %.1f %s"), *GetName(), StatusComponent->GetCurrentStamina(), StatusComponent->GetMaxStamina(), !StatusComponent->CanSprint() ? TEXT("(EXHAUSTED)") : TEXT("")));
+			
+			// 체력 출력 (UID + 20)
+			GEngine->AddOnScreenDebugMessage(UID + 20, 0.f, FColor::Green, FString::Printf(TEXT("[%s] Health: %.1f / %.1f %s"), *GetName(), StatusComponent->GetHealth(), StatusComponent->GetMaxHealth(), StatusComponent->IsDead() ? TEXT("(DEAD)") : TEXT("")));
+		}
+	}
+}
 
+void AQPCharacter::UpdateCameraDynamics(float DeltaTime)
+{
+	if (IsDead() || !CameraBoom || CrouchCameraInterpSpeed <= 0.f) return;
+
+	FVector DesiredOffset = GetDesiredCameraOffset(); // 현재 자세에 따른 원하는 카메라 오프셋 계산 (서있을 때 vs 앉아있을 때)
+	float TargetArmLength = DefaultArmLength; // 기본 거리 (조준 여부와 관계없이 총을 들었을 때 적용)
+	FVector TargetOffset = FVector::ZeroVector; // 카메라 피벗 위치 조정 (기본값은 캐릭터 위치)
+	FRotator TargetRelRot = FRotator::ZeroRotator; // 카메라 상대 회전 (Pitch 조정용, 기본값은 회전 없음)
+
+	// '총'을 들고 있는 경우 (조준 여부 무관하게 드론 뷰 적용)
+	bool bIsHoldingGun = (Weapontype == EQPWeaponType::EWT_Rifle || Weapontype == EQPWeaponType::EWT_Shotgun || Weapontype == EQPWeaponType::EWT_Handgun);
+	if (bIsHoldingGun) // 총을 들고 있는 경우 (조준 여부 무관하게 드론 뷰 적용)
+	{
+		float BaseArmLength = (IsAiming() ? AimingArmLength : DefaultArmLength) - 50.f; // 총을 들었을 때는 기본 거리에서 50cm 가까이 (Zoom In) - 조준 여부에 따라 기본 거리 조정 후 추가로 줌인
+		TargetArmLength = BaseArmLength; // 총을 들었을 때는 기본 거리에서 50cm 가까이 (Zoom In) - 조준 여부에 따라 기본 거리 조정 후 추가로 줌인
+
+		FRotator ControlRot = GetControlRotation();
+		float Pitch = ControlRot.Pitch;
+		if (Pitch > 180.f) // UE4의 Pitch는 0 ~ 360 범위이므로, -180 ~ 180 범위로 정규화
+			Pitch -= 360.f;
+
+		if (Pitch < 0.f)  // 아래를 볼 때는 Pivot 상승 + 카메라 숙임 + 줌인 적용
+		{
+			float AbsPitch = FMath::Abs(Pitch);
+
+			// Pitch가 0에서 -90 사이일 때, Pivot을 최대 150cm까지 상승시키고, 카메라를 최대 35도까지 숙이며, 카메라 거리를 최대 100cm까지 줌인
+			float AddedHeight = FMath::GetMappedRangeValueClamped(FVector2D(0.f, 90.f), FVector2D(0.f, 150.f), AbsPitch);
+			TargetOffset.Z = AddedHeight;
+
+			// Pitch가 0에서 -90 사이일 때, 카메라를 최대 35도까지 숙이며, 카메라 거리를 최대 100cm까지 줌인
+			float AddedPitch = FMath::GetMappedRangeValueClamped(FVector2D(0.f, 90.f), FVector2D(0.f, -35.f), AbsPitch);
+			TargetRelRot.Pitch = AddedPitch;
+			TargetOffset.X = 0.f;
+
+			// Pitch가 0에서 -90 사이일 때, 카메라 거리를 최대 100cm까지 줌인
+			TargetArmLength = FMath::GetMappedRangeValueClamped(FVector2D(0.f, 90.f), FVector2D(BaseArmLength, BaseArmLength - 100.f), AbsPitch);
+		}
+	}
+	else // 총이 아닐 때는 기존 로직 유지 (Pitch에 따른 동적 줌)
+	{
+		if (IsAiming()) // 조준 중일 때는 Pitch에 따른 줌 대신 고정된 AimingArmLength 사용
+		{
+			TargetArmLength = AimingArmLength; 
+		}
+		else // 조준하지 않을 때는 Pitch에 따라 동적으로 줌인/줌아웃 적용
+		{
 			FRotator ControlRot = GetControlRotation();
 			float Pitch = ControlRot.Pitch;
 			if (Pitch > 180.f) // UE4의 Pitch는 0 ~ 360 범위이므로, -180 ~ 180 범위로 정규화
 				Pitch -= 360.f;
+
+			if (Pitch < 0.f) // 아래를 볼 때는 줌인 (카메라와 캐릭터 사이 거리 감소)
+			{
+				TargetArmLength = FMath::GetMappedRangeValueClamped(FVector2D(-90.f, 0.f), FVector2D(MinVerticalArmLength, DefaultArmLength), Pitch);
+			}
+			else // 위를 볼 때는 줌아웃 (카메라와 캐릭터 사이 거리 증가)
+			{
+				TargetArmLength = FMath::GetMappedRangeValueClamped(FVector2D(0.f, 90.f), FVector2D(DefaultArmLength, MaxVerticalArmLength), Pitch);
+			}
+		}
+	}
+		
+	// 카메라 위치와 회전을 부드럽게 보간하여 적용
+	const FVector NewTargetOffset = FMath::VInterpTo(CameraBoom->TargetOffset, TargetOffset, DeltaTime, CrouchCameraInterpSpeed);
+	CameraBoom->TargetOffset = NewTargetOffset;
+		
+	// SocketOffset는 카메라의 실제 위치에 영향을 주는 요소이므로, TargetOffset과 함께 보간하여 적용
+	const FVector NewSocketOffset = FMath::VInterpTo(CameraBoom->SocketOffset, DesiredOffset, DeltaTime, CrouchCameraInterpSpeed);
+	CameraBoom->SocketOffset = NewSocketOffset;
+
+	// 카메라 회전 보간 (Pitch 조정용)
+	if (FollowCamera)
+	{
+		FRotator NewRelRot = FMath::RInterpTo(FollowCamera->GetRelativeRotation(), TargetRelRot, DeltaTime, CrouchCameraInterpSpeed);
+		FollowCamera->SetRelativeRotation(NewRelRot);
+
+		// 달리기 시 FOV 확대, 멈출 때 원래대로 보간하여 적용
+		float TargetFOV = (bWantsToSprint && IsSprinting()) ? SprintFOV : DefaultFOV;
+		float NewFOV = FMath::FInterpTo(FollowCamera->FieldOfView, TargetFOV, DeltaTime, SprintFOVInterpSpeed);
+		FollowCamera->SetFieldOfView(NewFOV);
+	}
+
+	const float NewArmLength = FMath::FInterpTo(CameraBoom->TargetArmLength, TargetArmLength, DeltaTime, CrouchCameraInterpSpeed); // 카메라 거리 보간
+	CameraBoom->TargetArmLength = NewArmLength; // 카메라 거리 업데이트
+}
+
+void AQPCharacter::UpdateDeathCamera(float DeltaTime)
+{
+	if (!IsDead() || !bIsDeathCameraTransitioning || !CameraBoom) return;
+
+	// 카메라 위치(거리)와 회전 보간
+	float InterpSpeed = 2.0f;
+	float CurrentArmLength = CameraBoom->TargetArmLength;
+	FRotator CurrentRotation = CameraBoom->GetComponentRotation();
+
+	float NewArmLength = FMath::FInterpTo(CurrentArmLength, DeathCameraTargetArmLength, DeltaTime, InterpSpeed);
+	FRotator NewRotation = FMath::RInterpTo(CurrentRotation, DeathCameraTargetRotation, DeltaTime, InterpSpeed);
+		
+	CameraBoom->TargetArmLength = NewArmLength;
+	CameraBoom->SetWorldRotation(NewRotation);
+
+	// 목표치에 거의 도달했으면 전환 종료 및 자유 시점 허용
+	if (FMath::IsNearlyEqual(NewArmLength, DeathCameraTargetArmLength, 10.f) && 
+		NewRotation.Equals(DeathCameraTargetRotation, 2.f))
+	{
+		bIsDeathCameraTransitioning = false;
+		bIsDeathCameraFreeMode = true; // 자유 시점 모드 활성화
+
+		// 회전 중심(피벗)을 기존 캐릭터 위치에서 현재 카메라 위치로 당겨옴
+		// 이제 카메라는 캐릭터를 공전하지 않고, 자신의 위치에서 독립적으로 제자리 회전/이동함
+		if (FollowCamera)
+		{
+			CameraBoom->SetWorldLocation(FollowCamera->GetComponentLocation());
+			CameraBoom->TargetArmLength = 0.f;
+			CameraBoom->SocketOffset = FVector::ZeroVector;
+			CameraBoom->TargetOffset = FVector::ZeroVector;
+		}
+
+		// 카메라가 이제 플레이어의 회전에 영향을 받도록 설정하여, 사망 후에도 플레이어가 시점을 자유롭게 조절할 수 있도록 함
+		CameraBoom->bUsePawnControlRotation = true;
+		CameraBoom->bInheritPitch = true;
+		CameraBoom->bInheritRoll = true;
+		CameraBoom->bInheritYaw = true;
+
+		// 현재 보고 있는 방향으로 컨트롤러 회전 동기화
+		if (AController* PC = GetController())
+		{
+			PC->SetControlRotation(NewRotation);
+
+			// 카메라 회전 제한(PitchMin/Max) 풀기
+			if (APlayerController* PlayerController = Cast<APlayerController>(PC))
+			{
+				if (PlayerController->PlayerCameraManager)
+				{
+					PlayerController->PlayerCameraManager->ViewPitchMin = -89.9f;
+					PlayerController->PlayerCameraManager->ViewPitchMax = 89.9f;
+				}
+			}
+		}
+	}
+}
+
+void AQPCharacter::UpdateRotationMode()
+{
+	// 기존 수동 회전 제어를 무시하고 엔진의 내장 회전을 강제 세팅했던 로직 제거 (버그 원인)
+}
+
+void AQPCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
+{
+	Super::SetupPlayerInputComponent(PlayerInputComponent);
+	check(PlayerInputComponent); //입력 컴포넌트 유효성 검사
+	PlayerInputComponent->BindAxis("MoveForward", this, &AQPCharacter::MoveForward); //앞뒤 이동 바인딩
+	PlayerInputComponent->BindAxis(TEXT("MoveRight"), this, &AQPCharacter::MoveRight); //좌우 이동 바인딩
+	PlayerInputComponent->BindAxis(TEXT("Turn"), this, &AQPCharacter::Turn); //좌우 회전 바인딩
+	PlayerInputComponent->BindAxis(TEXT("LookUp"), this, &AQPCharacter::LookUp); //상하 회전 바인딩
+	PlayerInputComponent->BindAction(TEXT("Jump"), IE_Pressed, this, &AQPCharacter::StartJump); //점프 바인딩
+	PlayerInputComponent->BindAction(TEXT("Jump"), IE_Released, this, &AQPCharacter::StopJump); //점프 멈춤 바인딩
+	PlayerInputComponent->BindAction(TEXT("Crouch"), IE_Pressed, this, &AQPCharacter::ToggleCrouch); //앉기/일어서기 토글 바인딩
+	// Sprint (Hold)
+	PlayerInputComponent->BindAction(TEXT("Sprint"), IE_Pressed, this, &AQPCharacter::StartSprint); //달리기 시작 바인딩
+	PlayerInputComponent->BindAction(TEXT("Sprint"), IE_Released, this, &AQPCharacter::StopSprint); //달리기 멈춤 바인딩
+	
+	// Reload
+	PlayerInputComponent->BindAction(TEXT("Reload"), IE_Pressed, this, &AQPCharacter::ReloadButtonPressed);
+
+	// input 추가
+	PlayerInputComponent->BindAction(TEXT("Attack"), IE_Pressed, this, &AQPCharacter::AttackPressed); //발사 바인딩
+	PlayerInputComponent->BindAction(TEXT("Attack"), IE_Released, this, &AQPCharacter::AttackReleased); //발사 멈춤 바인딩
+	
+	PlayerInputComponent->BindAction(TEXT("Equip"), IE_Pressed, this, &AQPCharacter::EquipPressed); //장착 바인딩
+	PlayerInputComponent->BindAction(TEXT("Equip"), IE_Released, this, &AQPCharacter::EquipReleased); //장착 해제 바인딩
+
+	PlayerInputComponent->BindAction(TEXT("Drop"), IE_Pressed, this, &AQPCharacter::DropPressed); //드랍 바인딩
+	PlayerInputComponent->BindAction(TEXT("Drop"), IE_Released, this, &AQPCharacter::DropReleased); //드랍 해제 바인딩
+
+	PlayerInputComponent->BindAction(TEXT("Aim"), IE_Pressed, this, &AQPCharacter::AimButtonPressed); //조준 바인딩
+	PlayerInputComponent->BindAction(TEXT("Aim"), IE_Released, this, &AQPCharacter::AimButtonReleased); //조준 멈춤 바인딩
+}
+void AQPCharacter::SetOverlappingWeapon(AWeaponBase* Weapon)
+{
+	if (OverlappingWeapon == Weapon) return; //겹쳐진 무기가 이미 설정된 무기와 같으면 함수 종료
+	OverlappingWeapon = Weapon; //겹쳐진 무기 설정
+	if (!IsLocallyControlled()) return; //로컬에서 제어되지 않는 경우 함수 종료
+	if (AQPPlayerController* PlayerController = Cast<AQPPlayerController>(GetController())) //플레이어 컨트롤러 가져오기
+	{
+		PlayerController->SetPickupTarget(OverlappingWeapon); //픽업 타겟 설정
+	}
+}
+void AQPCharacter::HandleWeaponTypeChanged(EQPWeaponType NewWeaponType)
+{
+	Weapontype = NewWeaponType; //장착된 무기 타입 업데이트
+
+	if (APlayerController* PlayerController = Cast<APlayerController>(GetController()))
+	{
+		if (PlayerController->PlayerCameraManager)	
+		{
+			bool bIsHoldingGun = (Weapontype == EQPWeaponType::EWT_Rifle || Weapontype == EQPWeaponType::EWT_Shotgun || Weapontype == EQPWeaponType::EWT_Handgun);
+			PlayerController->PlayerCameraManager->ViewPitchMin = bIsHoldingGun ? -30.f : -60.f; // 위를 보는 한계 (올려다봄)
+			PlayerController->PlayerCameraManager->ViewPitchMax = bIsHoldingGun ? 40.f : 60.f;  // 아래를 보는 한계 (내려다봄) - 머리 위까지만
+		}
+	}
+}
+//움직임 함수들
+void AQPCharacter::MoveForward(float Value) //앞뒤 이동
+{
+	MoveInputVector.X = Value; // 항상 전 후 입력값 갱신 (리턴 전에 갱신해야 키에서 손을 뗐을 때 0으로 리셋됨)
+
+	if (!Controller || Value == 0.f) return; //컨트롤러가 없거나 입력이 없으면
+
+	if (bIsDeathCameraFreeMode)
+	{
+		HandleDeathCameraInput(FollowCamera ? FollowCamera->GetForwardVector() : FVector::ZeroVector, Value);
+		return;
+	}
+
+	UpdateMovementSpeed(); //방향이 바뀌면 속도 재계산
+
+	const FRotator YawRotation(0.f, Controller->GetControlRotation().Yaw, 0.f); //컨트롤러의 Yaw 회전 가져오기
+	const FVector Direction = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X); //앞 방향 벡터 계산
+	AddMovementInput(Direction, Value); //이동 입력 추가
+}
+void AQPCharacter::MoveRight(float Value)
+{
+	MoveInputVector.Y = Value; // 항상 좌 우 입력값 갱신 
+
+	if (!Controller || Value == 0.f) return; //컨트롤러가 없거나
+
+	if (bIsDeathCameraFreeMode)
+	{
+		HandleDeathCameraInput(FollowCamera ? FollowCamera->GetRightVector() : FVector::ZeroVector, Value);
+		return;
+	}
+
+	UpdateMovementSpeed(); // 방향이 바뀌면 속도 재계산
+
+	const FRotator YawRotation(0.f, Controller->GetControlRotation().Yaw, 0.f); //컨트롤러의 Yaw 회전 가져오기
+	const FVector Direction = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y); //오른쪽 방향 벡터 계산
+	AddMovementInput(Direction, Value); //이동 입력 추가
+}
+void AQPCharacter::Turn(float Value) { AddControllerYawInput(Value); }  //컨트롤러의 Yaw 입력 추가
+void AQPCharacter::LookUp(float Value) { AddControllerPitchInput(Value); } //컨트롤러의 Pitch 입력 추가
+void AQPCharacter::StartJump() 
+{ 
+	if (bIsDeathCameraFreeMode)
+	{
+		HandleDeathCameraInput(FVector(0.f, 0.f, 1.f), 10.f); // 제자리 Z축 위로 상승 (점프량)
+		return;
+	}
+	Jump(); 
+} //점프 시작
+void AQPCharacter::StopJump() { StopJumping(); } //점프 멈춤
+void AQPCharacter::ToggleCrouch()
+{
+	if (bIsDeathCameraFreeMode)
+	{
+		HandleDeathCameraInput(FVector(0.f, 0.f, -1.f), 10.f); // 제자리 Z축 아래로 하강 (앉기량)
+		return;
+	}
+	UCharacterMovementComponent* MoveComponent = GetCharacterMovement(); //캐릭터 무브먼트 컴포넌트 가져오기
+	if (!MoveComponent || !MoveComponent->GetNavAgentPropertiesRef().bCanCrouch) return; //무브먼트 컴포넌트가 없거나 앉기 불가능하면 함수 종료
+	if (bIsCrouched)
+	{
+		UnCrouch(); //일어서기
+	}
+	else
+	{
+		Crouch(); //앉기
+	}
+}
+void AQPCharacter::StartSprint() //달리기 시작
+{
+	if (StatusComponent && !StatusComponent->CanSprint()) return; // 스테미나 부족/고갈 상태면 달리기 시작 불가
+
+	bWantsToSprint = true; 
+	UpdateMovementSpeed();
+	ServerStartSprint(); 
+
+	// [Sprint Effect] 달리기 카메라 쉐이크 시작
+	if (SprintCameraShakeClass && IsLocallyControlled())
+	{
+		if (APlayerController* PC = Cast<APlayerController>(GetController()))
+		{
+			PC->ClientStartCameraShake(SprintCameraShakeClass);
+		}
+	}
+}
+void AQPCharacter::StopSprint() //달리기 멈춤
+{
+	bWantsToSprint = false; 
+	UpdateMovementSpeed(); 
+	ServerStopSprint(); 
+
+	// [Sprint Effect] 달리기 카메라 쉐이크 중지 (immediate = false로 부드럽게 감쇄)
+	if (SprintCameraShakeClass && IsLocallyControlled())
+	{
+		if (APlayerController* PC = Cast<APlayerController>(GetController()))
+		{
+			PC->ClientStopCameraShake(SprintCameraShakeClass, false);
+		}
+	}
+}
+
+void AQPCharacter::ServerStartSprint_Implementation() //서버에서 달리기 시작 처리
+{
+	bWantsToSprint = true;
+	UpdateMovementSpeed();
+}
+
+void AQPCharacter::ServerStopSprint_Implementation() //서버에서 달리기 멈춤 처리
+{
+	bWantsToSprint = false;
+	UpdateMovementSpeed();
+}
+
+void AQPCharacter::OnRep_IsSprinting()
+{
+	UpdateMovementSpeed(); // SimProxy도 Sprint 상태 변경 시 속도 업데이트
+}
+void AQPCharacter::OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) //앉기 시작 시 호출
+{
+	Super::OnStartCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust); //부모 클래스의 OnStartCrouch 호출
+	UpdateMovementSpeed(); 
+}
+void AQPCharacter::OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) //일어서기 시작 시 호출
+{
+	Super::OnEndCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust); //부모 클래스의 OnEndCrouch 호출
+	UpdateMovementSpeed(); 
+}
+void AQPCharacter::UpdateMovementSpeed() 
+{
+	UCharacterMovementComponent* MoveComponent = GetCharacterMovement(); //캐릭터 무브먼트 컴포넌트 가져오기
+	if (!MoveComponent) return; //무브먼트 컴포넌트가 없으면 함수 종료
+
+	// 달리기 가능 여부 판단: 달리기 버튼이 눌려 있고, 스태미나가 충분하며, 조준 중이 아니며, 공격 중이 아니며, 뒤로 걷기가 아닌 경우에만 달리기 허용
+	bool bCanSprintState = bWantsToSprint && StatusComponent && StatusComponent->CanSprint() && !IsAiming();
+	if (CombatComponent && CombatComponent->IsAttacking()) bCanSprintState = false;
+	
+	// 뒤로 걷기일 때는 달리기 취소 (전진 혹은 전진 대각선, 횡이동 등 X >= 0 일 때만 달리기 허용)
+	if (MoveInputVector.X < 0.f)
+	{
+		bCanSprintState = false;
+	}
+
+	if (bCanSprintState) //의사가 있고 조건이 맞으면
+	{
+		float TargetSprintSpeed = SprintSpeed;
+		float TargetCrouchSprintSpeed = CrouchSprintSpeed;
+
+		if (StatusComponent && StatusComponent->GetCurrentStamina() <= 40.f)
+		{
+			float StaminaRatio = FMath::Clamp(StatusComponent->GetCurrentStamina() / 40.f, 0.f, 1.f);
+			TargetSprintSpeed = FMath::Lerp(WalkSpeed, SprintSpeed, StaminaRatio);
+			TargetCrouchSprintSpeed = FMath::Lerp(CrouchSpeed, CrouchSprintSpeed, StaminaRatio);
+		}
+
+		if (bIsCrouched) //앉아 있는지 확인
+		{
+			MoveComponent->MaxWalkSpeedCrouched = TargetCrouchSprintSpeed; //앉아서 뛰는 속도
+		}
+		else
+		{
+			MoveComponent->MaxWalkSpeed = TargetSprintSpeed; //일어서서 뛰는 속도
+		}
+	}
+	else if (bIsCrouched) //앉아 있는지 확인
+	{
+		MoveComponent->MaxWalkSpeedCrouched = CrouchSpeed; //앉은 상태일 때 걷는 속도
+	}
+	else 
+	{
+		MoveComponent->MaxWalkSpeed = WalkSpeed; //서있을 때의 걷는 속도
+	}
+}
+
+//전투 (Combat) 관련 함수들
+void AQPCharacter::EquipPressed()
+{
+	bEquipKeyDown = true;
+	bEquipHoldConsumed = false;
+
+	GetWorldTimerManager().SetTimer(EquipHoldTimerHandle, this, &AQPCharacter::OnEquipHoldTriggered, EquipHoldThreshhold, false);
+}
+
+void AQPCharacter::EquipReleased()
+{
+	if (!bEquipKeyDown) return;
+	bEquipKeyDown = false;
+
+	GetWorldTimerManager().ClearTimer(EquipHoldTimerHandle);
+
+	if (!bEquipHoldConsumed)
+	{
+		TryEquipWeapon();
+	}
+}
+
+void AQPCharacter::OnEquipHoldTriggered()
+{
+	if (!bEquipKeyDown) return;
+	bEquipHoldConsumed = true;
+
+	TryStorePickupToInventory();
+}
+
+void AQPCharacter::TryEquipWeapon() {
+	if (!CombatComponent) return; 
 
 			if (Pitch < 0.f)  // 아래를 볼 때는 Pivot 상승 + 카메라 숙임 + 줌인 적용
 			{
@@ -152,17 +690,21 @@ void AQPCharacter::Tick(float DeltaTime)
 				}
 			}
 		}
-		
-		// 카메라 위치와 회전을 부드럽게 보간하여 적용
-		const FVector NewTargetOffset = FMath::VInterpTo(CameraBoom->TargetOffset, TargetOffset, DeltaTime, CrouchCameraInterpSpeed);
-		CameraBoom->TargetOffset = NewTargetOffset;
-		
-		// SocketOffset는 카메라의 실제 위치에 영향을 주는 요소이므로, TargetOffset과 함께 보간하여 적용
-		const FVector NewSocketOffset = FMath::VInterpTo(CameraBoom->SocketOffset, DesiredOffset, DeltaTime, CrouchCameraInterpSpeed);
-		CameraBoom->SocketOffset = NewSocketOffset;
+	}
+}
 
-		// 카메라 회전 보간 (Pitch 조정용)
-		if (FollowCamera)
+//E 홀드(길게): 무기면 인벤 저장(장착 안함), 아이템이면 인벤 추가
+void AQPCharacter::TryStorePickupToInventory()
+{
+	if (!InventoryComponent) return;
+
+	if (OverlappingWeapon)
+	{
+		UItemDataAsset* WeaponItemData = OverlappingWeapon->GetWeaponItemData(); //겹쳐진 무기의 아이템 데이터 가져오기
+		if (!WeaponItemData) return; //아이템 데이터가 없으면 함수 종료
+
+		const bool bAdded = InventoryComponent->AddItem(WeaponItemData, 1); //인벤토리에 무기 아이템 추가 시도
+		if (bAdded)
 		{
 			FRotator NewRelRot = FMath::RInterpTo(FollowCamera->GetRelativeRotation(), TargetRelRot, DeltaTime, CrouchCameraInterpSpeed);
 			FollowCamera->SetRelativeRotation(NewRelRot);
@@ -215,169 +757,6 @@ void AQPCharacter::Tick(float DeltaTime)
 
 	AimOffset(DeltaTime); //회전 차이 계산
 }
-
-void AQPCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
-{
-	Super::SetupPlayerInputComponent(PlayerInputComponent);
-	check(PlayerInputComponent); //입력 컴포넌트 유효성 검사
-	PlayerInputComponent->BindAxis("MoveForward", this, &AQPCharacter::MoveForward); //앞뒤 이동 바인딩
-	PlayerInputComponent->BindAxis(TEXT("MoveRight"), this, &AQPCharacter::MoveRight); //좌우 이동 바인딩
-	PlayerInputComponent->BindAxis(TEXT("Turn"), this, &AQPCharacter::Turn); //좌우 회전 바인딩
-	PlayerInputComponent->BindAxis(TEXT("LookUp"), this, &AQPCharacter::LookUp); //상하 회전 바인딩
-	PlayerInputComponent->BindAction(TEXT("Jump"), IE_Pressed, this, &AQPCharacter::StartJump); //점프 바인딩
-	PlayerInputComponent->BindAction(TEXT("Jump"), IE_Released, this, &AQPCharacter::StopJump); //점프 멈춤 바인딩
-	PlayerInputComponent->BindAction(TEXT("Crouch"), IE_Pressed, this, &AQPCharacter::ToggleCrouch); //앉기/일어서기 토글 바인딩
-	// Sprint (Hold)
-	PlayerInputComponent->BindAction(TEXT("Sprint"), IE_Pressed, this, &AQPCharacter::StartSprint); //달리기 시작 바인딩
-	PlayerInputComponent->BindAction(TEXT("Sprint"), IE_Released, this, &AQPCharacter::StopSprint); //달리기 멈춤 바인딩
-	
-	// Reload
-	PlayerInputComponent->BindAction(TEXT("Reload"), IE_Pressed, this, &AQPCharacter::ReloadButtonPressed);
-
-	// input 추가
-	PlayerInputComponent->BindAction(TEXT("Attack"), IE_Pressed, this, &AQPCharacter::AttackPressed); //발사 바인딩
-	PlayerInputComponent->BindAction(TEXT("Attack"), IE_Released, this, &AQPCharacter::AttackReleased); //발사 멈춤 바인딩
-	PlayerInputComponent->BindAction(TEXT("Equip"), IE_Pressed, this, &AQPCharacter::TryEquipWeapon); //장착 바인딩
-	PlayerInputComponent->BindAction(TEXT("Aim"), IE_Pressed, this, &AQPCharacter::AimButtonPressed); //조준 바인딩
-	PlayerInputComponent->BindAction(TEXT("Aim"), IE_Released, this, &AQPCharacter::AimButtonReleased); //조준 멈춤 바인딩
-}
-void AQPCharacter::SetOverlappingWeapon(AWeaponBase* Weapon)
-{
-	if (OverlappingWeapon == Weapon) return; //겹쳐진 무기가 이미 설정된 무기와 같으면 함수 종료
-	OverlappingWeapon = Weapon; //겹쳐진 무기 설정
-	if (!IsLocallyControlled()) return; //로컬에서 제어되지 않는 경우 함수 종료
-	if (AQPPlayerController* PlayerController = Cast<AQPPlayerController>(GetController())) //플레이어 컨트롤러 가져오기
-	{
-		PlayerController->SetPickupTarget(OverlappingWeapon); //픽업 타겟 설정
-	}
-}
-void AQPCharacter::HandleWeaponTypeChanged(EQPWeaponType NewWeaponType)
-{
-	Weapontype = NewWeaponType; //장착된 무기 타입 업데이트
-}
-//움직임 함수들
-void AQPCharacter::MoveForward(float Value) //앞뒤 이동
-{
-	if (!Controller) return; //컨트롤러가 없거나 
-
-	MoveInputVector.X = Value; // 항상 전 후 입력값 갱신
-	UpdateMovementSpeed(); //방향이 바뀌면 속도 재계산
-
-	const FRotator YawRotation(0.f, Controller->GetControlRotation().Yaw, 0.f); //컨트롤러의 Yaw 회전 가져오기
-	const FVector Direction = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X); //앞 방향 벡터 계산
-	AddMovementInput(Direction, Value); //이동 입력 추가
-}
-void AQPCharacter::MoveRight(float Value)
-{
-	if (!Controller) return; //컨트롤러가 없거나
-
-	MoveInputVector.Y = Value; // 항상 좌 우 입력값 갱신 
-	UpdateMovementSpeed(); // 방향이 바뀌면 속도 재계산
-
-	const FRotator YawRotation(0.f, Controller->GetControlRotation().Yaw, 0.f); //컨트롤러의 Yaw 회전 가져오기
-	const FVector Direction = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y); //오른쪽 방향 벡터 계산
-	AddMovementInput(Direction, Value); //이동 입력 추가
-}
-void AQPCharacter::Turn(float Value) { AddControllerYawInput(Value); }  //컨트롤러의 Yaw 입력 추가
-void AQPCharacter::LookUp(float Value) { AddControllerPitchInput(Value); } //컨트롤러의 Pitch 입력 추가
-void AQPCharacter::StartJump() { Jump(); } //점프 시작
-void AQPCharacter::StopJump() { StopJumping(); } //점프 멈춤
-void AQPCharacter::ToggleCrouch()
-{
-	UCharacterMovementComponent* MoveComponent = GetCharacterMovement(); //캐릭터 무브먼트 컴포넌트 가져오기
-	if (!MoveComponent || !MoveComponent->GetNavAgentPropertiesRef().bCanCrouch) return; //무브먼트 컴포넌트가 없거나 앉기 불가능하면 함수 종료
-	if (bIsCrouched)
-	{
-		UnCrouch(); //일어서기
-	}
-	else
-	{
-		Crouch(); //앉기
-	}
-}
-void AQPCharacter::StartSprint() //달리기 시작
-{
-	bWantsToSprint = true; 
-	UpdateMovementSpeed();
-	ServerStartSprint(); 
-}
-void AQPCharacter::StopSprint() //달리기 멈춤
-{
-	bWantsToSprint = false; 
-	UpdateMovementSpeed(); 
-	ServerStopSprint(); 
-}
-
-void AQPCharacter::ServerStartSprint_Implementation() //서버에서 달리기 시작 처리
-{
-	bWantsToSprint = true;
-	UpdateMovementSpeed();
-}
-
-void AQPCharacter::ServerStopSprint_Implementation() //서버에서 달리기 멈춤 처리
-{
-	bWantsToSprint = false;
-	UpdateMovementSpeed();
-}
-
-void AQPCharacter::OnRep_IsSprinting()
-{
-	UpdateMovementSpeed(); // SimProxy도 Sprint 상태 변경 시 속도 업데이트
-}
-void AQPCharacter::OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) //앉기 시작 시 호출
-{
-	Super::OnStartCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust); //부모 클래스의 OnStartCrouch 호출
-	UpdateMovementSpeed(); 
-}
-void AQPCharacter::OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) //일어서기 시작 시 호출
-{
-	Super::OnEndCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust); //부모 클래스의 OnEndCrouch 호출
-	UpdateMovementSpeed(); 
-}
-void AQPCharacter::UpdateMovementSpeed() 
-{
-	UCharacterMovementComponent* MoveComponent = GetCharacterMovement(); //캐릭터 무브먼트 컴포넌트 가져오기
-	if (!MoveComponent) return; //무브먼트 컴포넌트가 없으면 함수 종료
-
-
-
-	// [Moved to Tick] 회전 모드 업데이트 Logic 제거 (속도 기반 동적 제어를 위해)
-
-	if (IsSprinting()) //달리기 중인지 확인
-	{
-		if (bIsCrouched) //앉아 있는지 확인
-		{
-			MoveComponent->MaxWalkSpeedCrouched = CrouchSprintSpeed; //앉아서 뛰는 속도
-		}
-		else
-		{
-			MoveComponent->MaxWalkSpeed = SprintSpeed; //일어서서 뛰는 속도
-		}
-	}
-	else if (bIsCrouched) //앉아 있는지 확인
-	{
-		MoveComponent->MaxWalkSpeedCrouched = CrouchSpeed; //앉은 상태일 때 걷는 속도
-	}
-	else 
-	{
-		MoveComponent->MaxWalkSpeed = WalkSpeed; //서있을 때의 걷는 속도
-	}
-
-}
-
-//전투 (Combat) 관련 함수들
-void AQPCharacter::TryEquipWeapon() 
-{
-	if (!CombatComponent) return;
-	if (OverlappingWeapon) //겹쳐진 무기가 있으면
-	{
-		// [Multiplayer] 서버에 장착 요청 (RPC)
-		CombatComponent->ServerEquipWeapon(OverlappingWeapon);
-		
-		OverlappingWeapon = nullptr; //겹쳐진 무기 초기화
-		SetOverlappingWeapon(nullptr); //겹쳐진 무기 설정 함수 호출
-	}
-}
 void AQPCharacter::AttackPressed()
 {
 	if (CombatComponent) CombatComponent->StartAttack(); //공격 시작
@@ -385,6 +764,56 @@ void AQPCharacter::AttackPressed()
 void AQPCharacter::AttackReleased()
 {
 	if (CombatComponent) CombatComponent->StopAttack(); //공격 멈춤
+}
+
+void AQPCharacter::DropPressed()
+{
+	bDropKeyDown = true;
+	bDropHoldConsumed = false;
+
+	GetWorldTimerManager().SetTimer(DropHoldTimerHandle, this, &AQPCharacter::OnDropHoldTriggered, DropHoldThreshhold, false);
+}
+
+void AQPCharacter::DropReleased()
+{
+	if (!bDropKeyDown) return;
+	bDropKeyDown = false;
+
+	GetWorldTimerManager().ClearTimer(DropHoldTimerHandle);
+
+	if (!bDropHoldConsumed)
+	{
+		// 짧게 누를 때 처리 (필요시)
+	}
+}
+
+void AQPCharacter::OnDropHoldTriggered()
+{
+	if (!bDropKeyDown) return;
+	bDropHoldConsumed = true;
+
+	TryDropEquipped();
+}
+
+void AQPCharacter::TryDropEquipped()
+{
+	if (!CombatComponent || !CombatComponent->HasWeapon()) return;
+
+	AWeaponBase* WeaponToDrop = CombatComponent->GetEquippedWeapon();
+	if (!WeaponToDrop) return;
+
+	CombatComponent->UnEquipWeapon(false); // 드랍 (인벤토리에 넣는 게 아니므로 false)
+
+	// 물리 활성화 및 분리
+	WeaponToDrop->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	WeaponToDrop->SetOwner(nullptr);
+
+	if (UPrimitiveComponent* RootPrim = Cast<UPrimitiveComponent>(WeaponToDrop->GetRootComponent()))
+	{
+		RootPrim->SetSimulatePhysics(true);
+		RootPrim->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		RootPrim->AddImpulse(GetActorForwardVector() * 300.f + GetActorUpVector() * 200.f, NAME_None, true);
+	}
 }
 
 //조준 버튼을 눌렀을 때 호출
@@ -424,29 +853,42 @@ void AQPCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLife
 	DOREPLIFETIME(AQPCharacter, OverlappingWeapon);
 	DOREPLIFETIME(AQPCharacter, bWantsToSprint);
 	DOREPLIFETIME(AQPCharacter, bIsTurningInPlace);
-	DOREPLIFETIME(AQPCharacter, bIsTurningInPlace);
 	DOREPLIFETIME(AQPCharacter, NetAimYaw);
+}
+
+bool AQPCharacter::IsDead() const
+{
+	return StatusComponent ? StatusComponent->IsDead() : false;
 }
 
 bool AQPCharacter::IsSprinting() const
 {
-	// 달리기 조건: 달리기 버튼이 눌려 있고, 조준 중이 아니며, 앞으로 이동 입력이 있는 경우
-	if (!bWantsToSprint || IsAiming()) return false;
+	if (StatusComponent && !StatusComponent->CanSprint()) return false; // 고갈 상태면 뛸 수 없음
 
-	if (!IsLocallyControlled()) // 서버와 다른 클라이언트는 실제 이동 속도로 판단
+	// 달리기 조건: 달리기 버튼이 눌려 있고, 조준 중이 아니며, **공격 중이 아니며**, 앞으로 이동 입력이 있는 경우
+	bool bIsAttacking = false;
+	if (CombatComponent)
 	{
-		if (GetVelocity().SizeSquared2D() < 10.f) return false; // 10.f는 약간의 오차 범위 (1cm/s 이상)
-
-		float Dot = FVector::DotProduct(GetVelocity().GetSafeNormal2D(), GetActorForwardVector()); // Dot이 0.1f 이상이면 대략 84도 이내로 전방 이동으로 간주 (약간의 횡이동 허용)
-		return Dot > 0.1f; // 0.1f: 약간의 횡이동 허용
+		bIsAttacking = CombatComponent->IsAttacking();
 	}
 
-	return MoveInputVector.X > 0.f; // 앞으로 이동 입력이 있는 경우에만 달리기로 간주 (후진은 달리기 아님)
+	if (!bWantsToSprint || IsAiming() || bIsAttacking) return false;
+
+	// 이동 속도 체크: 충분히 빠르게 움직이고 있는지 확인 (걷기 상태에서 약간의 오차 허용)
+	if (GetVelocity().SizeSquared2D() < 10.f) return false; // (10.f는 100cm/s의 제곱으로, 거의 정지 상태를 의미)
+
+	// 달리기 방향 체크: 달리는 방향(Velocity)과 캐릭터가 바라보는 방향(Forward)이 대략 90도 내외인지 확인
+	// 즉, 뒤나 옆으로 걷고 있는 게 아니라 '앞'으로 뛰고 있을 때만 Sprint로 인정
+	float Dot = FVector::DotProduct(GetVelocity().GetSafeNormal2D(), GetActorForwardVector()); 
+	return Dot > 0.1f; 
 }
 
 void AQPCharacter::AimOffset(float DeltaTime)
 {
+	if (IsDead()) return; // 사망 상태에서는 에임 오프셋 및 회전 로직 무시 (캐릭터가 카메라를 따라 도는 현상 방지)
+
 	FRotator AimRotation = FRotator::ZeroRotator; // AimRotation 선언을 함수 시작 부분으로 이동
+
 
 	// 1. 기본 회전값 획득 ( Pitch: Up(-), Down(+) )
 	if (Controller)
@@ -466,17 +908,20 @@ void AQPCharacter::AimOffset(float DeltaTime)
 
 	AimRotation.Pitch = FRotator::NormalizeAxis(AimRotation.Pitch); // Pitch 정규화 (0 ~ 360 -> -180 ~ 180)
 
+	bool bIsHoldingGun = (Weapontype == EQPWeaponType::EWT_Rifle || Weapontype == EQPWeaponType::EWT_Shotgun || Weapontype == EQPWeaponType::EWT_Handgun);
+
 	// Simulated Proxy도 AO 계산을 직접 수행 
 	if (GetLocalRole() == ROLE_SimulatedProxy)
 	{
 		float TargetPitch = FRotator::NormalizeAxis(AimRotation.Pitch); // SimProxy도 Pitch 정규화
+		TargetPitch = bIsHoldingGun ? FMath::Clamp(TargetPitch, -30.f, 40.f) : FMath::Clamp(TargetPitch, -90.f, 90.f);
 		AO_Pitch = FMath::FInterpTo(AO_Pitch, TargetPitch, DeltaTime, 20.f);  
 		AimRotation.Yaw = NetAimYaw;
 	}
 	else // Local/Server는 기존 로직 유지 (즉시 반영)
 	{
 		float Pitch = FRotator::NormalizeAxis(AimRotation.Pitch);
-		AO_Pitch = FMath::Clamp(Pitch, -90.f, 90.f);
+		AO_Pitch = bIsHoldingGun ? FMath::Clamp(Pitch, -30.f, 40.f) : FMath::Clamp(Pitch, -90.f, 90.f);
 	}
 
 	// 2. HitTarget 기반 보정 (Yaw Only)
@@ -503,7 +948,6 @@ void AQPCharacter::AimOffset(float DeltaTime)
 		FRotator(0.f, AimYaw, 0.f),
 		FRotator(0.f, ActorYaw, 0.f)
 	).Yaw;
-
 	// Simulated Proxy는 부드러운 보간 적용, Local/Server는 즉시 반영 (회전 애니메이션이 어색하게 보이는 것을 방지)
 	if (GetLocalRole() == ROLE_SimulatedProxy)
 	{
@@ -718,6 +1162,383 @@ void AQPCharacter::PlayReloadMontage() //재장전 몽타주 재생 함수
 		{
 			AnimInstance->Montage_JumpToSection(SectionName, ReloadMontage); 
 		}
+	}
+}
+
+void AQPCharacter::HandleAimStateChanged(bool bIsAiming)
+{
+	UpdateMovementSpeed(); // 조준 상태가 변경되면 속도를 즉시 업데이트 (멀티플레이어 동기화 보장)
+}
+
+	// [Health] 체력 서브 시스템 관련 구현 없음 (StatusComponent로 이관)
+
+float AQPCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
+{
+	float DamageApplied = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+
+	if (IsDead()) return DamageApplied; // 이미 죽었다면 데미지 무시
+
+	if (StatusComponent)
+	{
+		StatusComponent->ReceiveDamage(DamageApplied);
+	}
+
+	return DamageApplied;
+}
+
+void AQPCharacter::Die()
+{
+	if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("QPCharacter: Die() called, broadcasting OnDeath and calling MulticastDie."));
+
+	MulticastDie(); // 클라이언트로 사망 연출 명령 전송
+	
+	if (HasAuthority())
+	{
+		AQPGameMode* QPGameMode = Cast<AQPGameMode>(GetWorld()->GetAuthGameMode());
+		if (QPGameMode)
+		{
+			QPGameMode->RequestRespawn(this, GetController());
+		}
+	}
+}
+
+void AQPCharacter::HandleDeathCameraInput(FVector MoveDirection, float Value)
+{
+	if (bIsDeathCameraFreeMode && CameraBoom)
+	{
+		// 마우스가 바라보는 3D 렌즈 회전 방향(Pitch 포함)을 그대로 가져와 이동 구현 (초당 배율 20.f 사용)
+		CameraBoom->AddWorldOffset(MoveDirection * Value * 20.f);
+	}
+}
+
+void AQPCharacter::UpdatePickupWidgetTarget()
+{
+	if (!CombatComponent) return;
+	if (OverlappingWeapon) //겹쳐진 무기가 있으면
+	{
+		// [Multiplayer] 서버에 장착 요청 (RPC)
+		CombatComponent->ServerEquipWeapon(OverlappingWeapon);
+		
+		OverlappingWeapon = nullptr; //겹쳐진 무기 초기화
+		SetOverlappingWeapon(nullptr); //겹쳐진 무기 설정 함수 호출
+	}
+}
+void AQPCharacter::AttackPressed()
+{
+	if (CombatComponent) CombatComponent->StartAttack(); //공격 시작
+}
+void AQPCharacter::AttackReleased()
+{
+	if (CombatComponent) CombatComponent->StopAttack(); //공격 멈춤
+}
+
+//조준 버튼을 눌렀을 때 호출
+void AQPCharacter::AimButtonPressed()
+{
+	if (!CombatComponent) return; 
+
+	CombatComponent->SetAiming(true); 
+	UpdateMovementSpeed(); 
+	
+	if (CameraBoom) CameraBoom->bEnableCameraLag = false;
+}
+
+//조준 버튼에서 손을 뗐을 때 호출
+void AQPCharacter::AimButtonReleased()
+{
+	if (!CombatComponent) return; 
+
+	CombatComponent->SetAiming(false); 
+	UpdateMovementSpeed(); 
+
+	// 조준 해제 시 카메라 랙 다시 활성화
+	if (CameraBoom) CameraBoom->bEnableCameraLag = true;
+}
+
+//현재 조준 중인지 여부를 외부에서 확인
+bool AQPCharacter::IsAiming() const
+{
+	return CombatComponent && CombatComponent->IsAiming(); //전투 컴포넌트가 유효하고 조준 중인지 반환
+}
+
+// 네트워크 복제 설정
+void AQPCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AQPCharacter, OverlappingWeapon);
+	DOREPLIFETIME(AQPCharacter, bWantsToSprint);
+	DOREPLIFETIME(AQPCharacter, bIsTurningInPlace);
+	DOREPLIFETIME(AQPCharacter, bIsTurningInPlace);
+	DOREPLIFETIME(AQPCharacter, NetAimYaw);
+}
+
+bool AQPCharacter::IsSprinting() const
+{
+	// 달리기 조건: 달리기 버튼이 눌려 있고, 조준 중이 아니며, 앞으로 이동 입력이 있는 경우
+	if (!bWantsToSprint || IsAiming()) return false;
+
+	if (!IsLocallyControlled()) // 서버와 다른 클라이언트는 실제 이동 속도로 판단
+	{
+		if (GetVelocity().SizeSquared2D() < 10.f) return false; // 10.f는 약간의 오차 범위 (1cm/s 이상)
+
+		float Dot = FVector::DotProduct(GetVelocity().GetSafeNormal2D(), GetActorForwardVector()); // Dot이 0.1f 이상이면 대략 84도 이내로 전방 이동으로 간주 (약간의 횡이동 허용)
+		return Dot > 0.1f; // 0.1f: 약간의 횡이동 허용
+	}
+
+	return MoveInputVector.X > 0.f; // 앞으로 이동 입력이 있는 경우에만 달리기로 간주 (후진은 달리기 아님)
+}
+
+void AQPCharacter::RefreshPickupCandidate(const AActor* ActorToIgnore)
+{
+	FRotator AimRotation = FRotator::ZeroRotator; // AimRotation 선언을 함수 시작 부분으로 이동
+
+	// 1. 기본 회전값 획득 ( Pitch: Up(-), Down(+) )
+	if (Controller)
+	{
+		AimRotation = Controller->GetControlRotation();
+	}
+	else
+	{
+		AimRotation = GetBaseAimRotation();
+	}
+	
+	// [Network] NetAimYaw 업데이트 (Server/Local)
+	if (HasAuthority() || IsLocallyControlled())
+	{
+		NetAimYaw = AimRotation.Yaw;
+	}
+
+	AimRotation.Pitch = FRotator::NormalizeAxis(AimRotation.Pitch); // Pitch 정규화 (0 ~ 360 -> -180 ~ 180)
+
+	// Simulated Proxy도 AO 계산을 직접 수행 
+	if (GetLocalRole() == ROLE_SimulatedProxy)
+	{
+		float TargetPitch = FRotator::NormalizeAxis(AimRotation.Pitch); // SimProxy도 Pitch 정규화
+		AO_Pitch = FMath::FInterpTo(AO_Pitch, TargetPitch, DeltaTime, 20.f);  
+		AimRotation.Yaw = NetAimYaw;
+	}
+	else // Local/Server는 기존 로직 유지 (즉시 반영)
+	{
+		float Pitch = FRotator::NormalizeAxis(AimRotation.Pitch);
+		AO_Pitch = FMath::Clamp(Pitch, -90.f, 90.f);
+	}
+
+	// 2. HitTarget 기반 보정 (Yaw Only)
+	if (CombatComponent && !CombatComponent->HitTarget.IsZero())
+	{
+		FVector Start = GetActorLocation();
+
+		// 근접 거리 체크 (2m 이상 거리에서만 LookAt 적용)
+		if (FVector::Dist(Start, CombatComponent->HitTarget) > 200.f)
+		{
+			if (IsAiming()) // 조준 중일 때만 LookAt 적용 (비조준 시에는 기존 회전 유지)
+			{
+				FRotator LookAtRotation = UKismetMathLibrary::FindLookAtRotation(Start, CombatComponent->HitTarget); // HitTarget을 향하는 회전 계산
+				AimRotation.Yaw = LookAtRotation.Yaw; // Yaw만 적용하여 AimRotation 보정
+			}
+		}
+	}
+
+	// 3. Yaw 계산
+	const float AimYaw = AimRotation.Yaw;
+	const float ActorYaw = GetActorRotation().Yaw;
+
+	const float DeltaYaw = UKismetMathLibrary::NormalizedDeltaRotator(
+		FRotator(0.f, AimYaw, 0.f),
+		FRotator(0.f, ActorYaw, 0.f)
+	).Yaw;
+
+	// Simulated Proxy는 부드러운 보간 적용, Local/Server는 즉시 반영 (회전 애니메이션이 어색하게 보이는 것을 방지)
+	if (GetLocalRole() == ROLE_SimulatedProxy)
+	{
+		float TargetYaw = FMath::Clamp(DeltaYaw, -90.f, 90.f);
+		AO_Yaw = FMath::FInterpTo(AO_Yaw, TargetYaw, DeltaTime, 5.f); // 10.f -> 5.f (Micro-Jitter Fix)
+	}
+	else
+	{
+		AO_Yaw = FMath::Clamp(DeltaYaw, -90.f, 90.f);
+	}
+
+	// 이동 중인지 확인
+	const float Speed = GetVelocity().Size2D();
+	bool bIsAttacking = false;
+	if (CombatComponent) bIsAttacking = CombatComponent->IsAttacking();
+
+	const float DeltaYawAbs = FMath::Abs(DeltaYaw); 
+
+	{
+		if (Speed > 1.f) // 이동 중이라면 (1.f는 오차 범위)
+		{
+			bIsTurningInPlace = false;
+
+			const FRotator TargetRotation = FRotator(0.f, AimYaw, 0.f); // 이동 중에는 항상 AimYaw를 향하도록 회전 (달리기 중에도 적용)
+			
+
+			if (GetLocalRole() != ROLE_SimulatedProxy)  // Simulated Proxy는 제자리 회전 로직에서 제외 (회전 애니메이션이 어색하게 보이는 것을 방지)
+			{
+				if (!bUseControllerRotationYaw) // Controller Rotation이 비활성화된 경우에만 회전 로직 적용 (달리기 중에는 Controller Rotation이 활성화되어 있으므로 회전 로직 적용 제외)
+				{
+					if (IsAiming()) // 조준 중일 때만 즉시 회전 (공격 중 강제 회전 제거)
+					{
+						SetActorRotation(TargetRotation);
+					}
+					else // 이동 중이지만 조준하지 않을 때는 부드럽게 회전
+					{
+						// 몽타주 재생 여부 확인
+						bool bIsMontagePlaying = false;
+						if (GetMesh() && GetMesh()->GetAnimInstance())
+						{
+							if (CombatComponent && CombatComponent->GetEquippedWeapon())
+							{
+								UAnimMontage* FireMontage = CombatComponent->GetEquippedWeapon()->GetFireMontage();
+								if (GetMesh()->GetAnimInstance()->Montage_IsPlaying(FireMontage))
+								{
+									bIsMontagePlaying = true;
+								}
+							}
+						}
+
+						float InterpSpeed = 15.f;
+						if (bIsAttacking || bIsMontagePlaying) InterpSpeed = 50.f; // [Fix] 공격 중에는 빠르게 회전하여 상체 비틀림 방지
+
+						const FRotator NewRotation = FMath::RInterpTo(GetActorRotation(), TargetRotation, DeltaTime, InterpSpeed); // 이동 중이지만 조준하지 않을 때는 부드럽게 회전 (공격 중 강제 회전 제거)
+						SetActorRotation(NewRotation);
+
+						// 회전 후의 Yaw로 AO_Yaw 계산 
+						const float NewActorYaw = NewRotation.Yaw;
+						const float NewDeltaYaw = UKismetMathLibrary::NormalizedDeltaRotator(FRotator(0.f, AimYaw, 0.f), FRotator(0.f, NewActorYaw, 0.f)).Yaw;
+						AO_Yaw = FMath::Clamp(NewDeltaYaw, -90.f, 90.f);
+					}
+				}
+			}
+		}
+		else // 거의 정지 상태라면 제자리 회전 로직 적용
+		{
+			
+			float TurnThreshold = 60.f; 
+			if (bIsAttacking) TurnThreshold = 0.f; // [Fix] 공격 중에는 즉시 회전하여 상체 비틀림 방지
+
+			if (DeltaYawAbs > TurnThreshold) // 60도 이상으로 벌어지면 제자리 회전 시작
+			{
+				bIsTurningInPlace = true;
+			}
+			else if (DeltaYawAbs < 5.f) // 5도 미만으로 줄어들면 제자리 회전 종료 (부드러운 종료를 위해 완화)
+			{
+				bIsTurningInPlace = false;
+			}
+
+			if (bIsTurningInPlace) // 제자리 회전 로직 적용
+			{
+				const FRotator TargetRotation = FRotator(0.f, AimYaw, 0.f); 
+
+				float InterpSpeed = 20.f; // 기본 회전 속도
+				if (DeltaYawAbs <= 60.f) // 60도 이하에서는 회전 속도를 점점 빠르게 (잔여 회전이 적을수록 더 빠르게)
+				{
+					InterpSpeed = FMath::GetMappedRangeValueClamped(FVector2D(0.f, 60.f), FVector2D(10.f, 20.f), DeltaYawAbs); // 0도에 가까울수록 20.f에 가깝게, 60도에 가까울수록 10.f에 가깝게 (잔여 회전이 적을수록 더 빠르게)
+				}
+
+				if (GetLocalRole() != ROLE_SimulatedProxy) // Simulated Proxy는 제자리 회전 로직에서 제외 (회전 애니메이션이 어색하게 보이는 것을 방지)
+				{
+					if (DeltaYawAbs < 2.f) // 2도 미만으로 줄어들면 회전을 강제로 맞춰서 제자리 회전 종료 (잔여 회전이 거의 없을 때는 부드러운 종료를 위해 강제 맞춤)
+					{
+						SetActorRotation(TargetRotation);
+						bIsTurningInPlace = false; // 강제 종료
+					}
+					else // 잔여 회전이 아직 있을 때는 부드럽게 회전
+					{
+						const FRotator NewRotation = FMath::RInterpTo(GetActorRotation(), TargetRotation, DeltaTime, InterpSpeed);
+						SetActorRotation(NewRotation);
+					}
+				}
+			}
+		}
+	}
+
+	UpdatePickupWidgetTarget(); //픽업 위젯 타겟 업데이트
+}
+
+void AQPCharacter::MulticastDie_Implementation()
+{
+	// 클라이언트 측 캐릭터 사망 연출 실행
+
+	// 1. 공격 중지
+	if (CombatComponent)
+	{
+		CombatComponent->StopAttack();
+	}
+
+	// 2. 몽타주 재생 (사망 애니메이션)
+	if (DeathMontage && GetMesh() && GetMesh()->GetAnimInstance())
+	{
+		// 기존 재생 중인 몽타주가 있다면 모두 정지하여 사망 애니메이션이 덮어쓰거나 씹히지 않도록 보장
+		GetMesh()->GetAnimInstance()->Montage_Stop(0.1f, nullptr);
+
+		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Cyan, TEXT("QPCharacter: DeathMontage and AnimInstance valid, attempting to play."));
+
+		float MontageDuration = GetMesh()->GetAnimInstance()->Montage_Play(DeathMontage);
+		
+		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Orange, FString::Printf(TEXT("QPCharacter: Played Montage. Duration = %f"), MontageDuration));
+
+		if (MontageDuration > 0.f)
+		{
+			TWeakObjectPtr<AQPCharacter> WeakThis(this);
+			FTimerHandle AnimPauseTimerHandle;
+			// 유저 요청에 따라 몽타주 길이에 상관없이 2초 후 애니메이션을 정지시킵니다.
+			GetWorld()->GetTimerManager().SetTimer(AnimPauseTimerHandle, FTimerDelegate::CreateLambda([WeakThis]()
+			{
+				if (WeakThis.IsValid() && WeakThis->GetMesh())
+				{
+					WeakThis->GetMesh()->bPauseAnims = true; 
+				}
+			}), 2.0f, false);
+		}
+	}
+	else
+	{
+		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("QPCharacter: FAILED to play montage. Missing DeathMontage or AnimInstance."));
+	}
+
+	// 3. 충돌 해제
+	if (UCapsuleComponent* CapsuleComp = GetCapsuleComponent())
+	{
+		// 캡슐 콜리전을 완전히 끄면 바닥을 뚫고 지나가거나 무브먼트 상태 변화로 몽타주가 취소될 수 있으므로 폰/카메라/탄환 등을 무시하도록 변경합니다.
+		CapsuleComp->SetCollisionResponseToChannel(ECollisionChannel::ECC_Pawn, ECollisionResponse::ECR_Ignore);
+		CapsuleComp->SetCollisionResponseToChannel(ECollisionChannel::ECC_Camera, ECollisionResponse::ECR_Ignore);
+		CapsuleComp->SetCollisionResponseToChannel(ECollisionChannel::ECC_Vehicle, ECollisionResponse::ECR_Ignore);
+	}
+
+	if (GetMesh())
+	{
+		GetMesh()->SetCollisionResponseToChannel(ECollisionChannel::ECC_Pawn, ECollisionResponse::ECR_Ignore); // 다른 캐릭터 무시
+		GetMesh()->SetCollisionResponseToChannel(ECollisionChannel::ECC_Visibility, ECollisionResponse::ECR_Ignore); // 탄환 무시
+	}
+
+	// 4. 카메라 설정 변경 (위에서 아래로 내려다보는 자유 시점 애니메이션 시작용 세팅)
+	if (CameraBoom)
+	{
+		FDetachmentTransformRules DetachRules(EDetachmentRule::KeepWorld, true);
+		CameraBoom->DetachFromComponent(DetachRules);
+
+		// 카메라 붐이 맵이나 캐릭터 시체에 걸려서 부딪히고 줌인되는(간섭) 현상 방지
+		CameraBoom->bDoCollisionTest = false;
+
+		// 카메라가 캐릭터의 회전에 영향을 받지 않도록 설정 (캐릭터 시체와 겹치지 않도록 고정된 시점 유지)
+		CameraBoom->bUsePawnControlRotation = false;
+		CameraBoom->bInheritPitch = false;
+		CameraBoom->bInheritRoll = false;
+		CameraBoom->bInheritYaw = false;
+		
+		// 카메라 붐을 위로 올려서 내려다보는 시점으로 전환 (캐릭터 시체와 겹치지 않도록 충분히 높게 설정)
+		bIsDeathCameraTransitioning = true;
+		bIsDeathCameraFreeMode = false;
+	}
+
+	// 5. 캐릭터 이동 불가 상태로 변경
+	if (GetCharacterMovement())
+	{
+		GetCharacterMovement()->DisableMovement();
+		GetCharacterMovement()->StopMovementImmediately();
 	}
 }
 

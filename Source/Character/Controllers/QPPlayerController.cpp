@@ -12,17 +12,14 @@
 #include "PJ_Quiet_Protocol/Weapons/WeaponBase.h"
 #include "Components/Border.h"
 #include "Components/Widget.h"
-#include "Components/PanelWidget.h"
 
 void AQPPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
 	if (!IsLocalController()) return; // 로컬 컨트롤러인지 확인
-	UE_LOG(LogTemp, Warning, TEXT("AQPPlayerController::BeginPlay - Local Controller Initialized"));
 	if (PickupWidgetClass) {
 		PickupWidget = CreateWidget<UQPPickupWidget>(this, PickupWidgetClass); // 위젯 인스턴스 생성
-		if(PickupWidget) {
-			UE_LOG(LogTemp, Warning, TEXT("AQPPlayerController::BeginPlay - PickupWidget Created"));
+		if (PickupWidget) {
 			PickupWidget->AddToViewport(999); // 뷰포트에 추가
 			PickupWidget->SetTargetActor(nullptr); // 타겟 액터 초기화
 			PickupWidget->SetVisibility(ESlateVisibility::Hidden); // 위젯 숨기기
@@ -66,7 +63,7 @@ void AQPPlayerController::SetPickupTarget(AActor* NewTarget)
 void AQPPlayerController::ToggleInventory()
 {
 	SetLootListVisible(false); // 전리품 목록 위젯 숨기기
-	bLootInventoryOpen = false; // 전리품 인벤토리 열림 상태 초기
+	bLootInventoryOpen = false; // 전리품 인벤토리 열림 상태 초기화
 
 	const bool bNewOpen = !bInventoryOpen; // 새로운 인벤토리 열림 상태
 	SetInventoryOpen(bNewOpen); // 인벤토리 열림 상태 설정
@@ -229,7 +226,7 @@ bool AQPPlayerController::IsLootListVisible() const
 
 bool AQPPlayerController::HasNearbyLoot(float Radius) const
 {
-	const APawn* pawn = GetPawn(); 
+	const APawn* pawn = GetPawn();
 	if (!pawn) return false;
 
 	UWorld* World = GetWorld();

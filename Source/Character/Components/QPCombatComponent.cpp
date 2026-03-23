@@ -40,6 +40,7 @@ void UQPCombatComponent::BeginPlay()
 	Super::BeginPlay();
 	OwnerCharacter = Cast<ACharacter>(GetOwner()); //소유한 캐릭터 가져오기
 
+	// 게임 시작 시 크로스헤어 오프셋 초기화 (HUD에서 가져오기)
 	if (OwnerCharacter)
 	{
 		if (APlayerController* PlayerController = Cast<APlayerController>(OwnerCharacter->GetController()))
@@ -57,6 +58,7 @@ void UQPCombatComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+	// 로컬 플레이어만 HitTarget 계산 및 크로스헤어 위치 업데이트 수행
 	if (OwnerCharacter && OwnerCharacter->IsLocallyControlled())
 	{
 		FHitResult HitResult;
@@ -87,8 +89,8 @@ void UQPCombatComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 
 void UQPCombatComponent::ServerSetHitTarget_Implementation(const FVector_NetQuantize& TraceHitTarget_Arg)
 {
-	TraceHitTarget = TraceHitTarget_Arg;
-	HitTarget = TraceHitTarget_Arg;
+	TraceHitTarget = TraceHitTarget_Arg; // 서버에서 받은 TraceHitTarget을 저장
+	HitTarget = TraceHitTarget_Arg; // 서버에서도 HitTarget 업데이트 (서버/다른 클라이언트는 TraceHitTarget 사용)
 }
 
 void UQPCombatComponent::UpdateCrosshairPosition(float DeltaTime)
@@ -150,12 +152,12 @@ void UQPCombatComponent::OnRep_EquippedWeapon() //서버에서 EquippedWeapon이
 {
 	if (!OwnerCharacter) 
 	{
-		OwnerCharacter = Cast<ACharacter>(GetOwner());
+		OwnerCharacter = Cast<ACharacter>(GetOwner()); //소유한 캐릭터가 유효하지 않으면 다시 가져오기
 	}
 	
 	if (EquippedWeapon && OwnerCharacter) 
 	{
-		EquippedWeapon->OnEquipped(OwnerCharacter); 
+		EquippedWeapon->OnEquipped(OwnerCharacter);  //무기 장착 처리 호출
 		AttachWeaponToCharacter(EquippedWeapon); //캐릭터에 무기 부착
 		SetWeaponType(EquippedWeapon->GetWeaponType()); //무기 타입 설정
 	}
@@ -169,7 +171,8 @@ bool UQPCombatComponent::EquipWeapon(AWeaponBase* NewWeapon, bool bUnequipCurren
 		UnEquipWeapon(true); //현재 무기 해제
 	}
 	EquippedWeapon = NewWeapon; //새 무기 장착
-	//소유자/충돌 기본 처리 (**1 나중에 확장)
+
+	//소유자/충돌 기본 처리 (나중에 확장)
 	EquippedWeapon->SetOwner(OwnerCharacter);//소유자 설정
 	EquippedWeapon->SetInstigator(Cast<APawn>(OwnerCharacter)); //인스티게이터 설정
 	EquippedWeapon->SetActorEnableCollision(false); //충돌 비활성화
@@ -181,7 +184,7 @@ bool UQPCombatComponent::EquipWeapon(AWeaponBase* NewWeapon, bool bUnequipCurren
 		SetWeaponType(EQPWeaponType::EWT_None); //무기 타입 없음으로 설정
 		return false; //false 반환
 	}
-	SetWeaponType(NewWeapon->GetWeaponType()); //무기 타입 설정 //**2 WeaponBase에서 GetWeaponType() 구현 필요
+	SetWeaponType(NewWeapon->GetWeaponType()); //무기 타입 설정 ( WeaponBase에서 GetWeaponType() 구현 필요 )
 	return true; //성공적으로 장착했으므로 true 반환
 }
 
@@ -209,6 +212,18 @@ void UQPCombatComponent::ServerEquipWeapon_Implementation(AWeaponBase* WeaponToE
 
 void UQPCombatComponent::StartAttack()
 {
+	if (!EquippedWeapon) return;
+
+	// 단발 무기이거나 근접 무기인 경우, 마우스를 꾹 누르고 있어도 한 번만 발사되도록 검사
+	if (!EquippedWeapon->IsAutomatic() || EquippedWeapon->GetWeaponType() == EQPWeaponType::EWT_Melee)
+	{
+		if (!bCanFireSingleShot) return; // 이미 이번 클릭에서 한 발 쐈으면 무시
+		bCanFireSingleShot = false; // 플래그 잠금
+	}
+
+	// [Fix] 클라이언트(로컬)에서도 쿨타임 검사를 수행하여 연타 시 애니메이션 재시작을 방지
+	if (!CanFire(EquippedWeapon->IsAutomatic())) return;
+
 	SetIsAttacking(true); // [Prediction] 로컬에서 즉시 반응
 	ServerStartAttack(); // 서버에 공격 요청
 }
@@ -218,7 +233,7 @@ bool UQPCombatComponent::CanFire(bool bAutomatic)
 {
 	if (!EquippedWeapon) return false;
 	
-	// 자동 무기가 아닌 경우, 발사 타이머 체크 없이 바로 발사 가능
+	// 자동 무기가 아니더라도 무기에 설정된 FireRate 만큼 일정한 쿨타임을 적용하여 연타를 막음
 	double CurrentTime = GetWorld()->GetTimeSeconds();
 	if (CurrentTime - LastFireTime < EquippedWeapon->GetFireRate())
 	{
@@ -232,7 +247,7 @@ void UQPCombatComponent::ServerStartAttack_Implementation()
 {
 	if (!EquippedWeapon) return;
 
-	// 자동 무기인 경우 발사 타이머가 제어하므로, 첫 발사 시에도 FireRate 체크
+	// 근접 무기 및 단/연발 화기를 포함하여 모두 설정된 FireRate 만큼의 쿨타임 체크 수행
 	if (!CanFire(EquippedWeapon->IsAutomatic())) return;
 
 	SetIsAttacking(true); // 공격 상태 true로 설정 (Replicated)
@@ -240,7 +255,7 @@ void UQPCombatComponent::ServerStartAttack_Implementation()
 	Fire(); // 서버에서 발사 처리 (Multicast 호출)
 
 	// 자동 무기인 경우 발사 타이머 시작 (연사 제어)
-	if (EquippedWeapon->IsAutomatic() && EquippedWeapon->GetWeaponType() == EQPWeaponType::EWT_Rifle) 
+	if (EquippedWeapon->IsAutomatic()) 
 	{
 		StartFireTimer(); // 발사 타이머 시작
 	}
@@ -248,8 +263,10 @@ void UQPCombatComponent::ServerStartAttack_Implementation()
 
 void UQPCombatComponent::StopAttack()
 {
-	SetIsAttacking(false); // [Prediction] 로컬에서 즉시 반응
-	ServerStopAttack();
+	bCanFireSingleShot = true; // 단발 발사 플래그 초기화 (마우스 뗐을 때)
+
+	SetIsAttacking(false); //공격 상태 false로 설정
+	ServerStopAttack(); //서버에 공격 중지 요청
 }
 
 void UQPCombatComponent::ServerStopAttack_Implementation()
@@ -273,30 +290,29 @@ void UQPCombatComponent::Reload()
 
 void UQPCombatComponent::ServerReload_Implementation()
 {
-	if (!OwnerCharacter || !EquippedWeapon) return;
+	if (!OwnerCharacter || !EquippedWeapon) return; //소유한 캐릭터나 장착된 무기가 유효하지 않으면 반환
 
-	MulticastReload();
+	MulticastReload(); // 모든 클라이언트에서 재장전 애니메이션/이펙트 동기화용 함수 호출 (Unreliable로 설정하여 네트워크 최적화)
 }
 
 void UQPCombatComponent::MulticastReload_Implementation()
 {
 	if (AQPCharacter* QPChar = Cast<AQPCharacter>(OwnerCharacter))
 	{
-		QPChar->PlayReloadMontage();
+		QPChar->PlayReloadMontage(); //재장전 몽타주 재생 (모든 클라이언트에서)
 	}
 }
 
 void UQPCombatComponent::Fire()
 {
-	// Server Only Check
-	if (OwnerCharacter && !OwnerCharacter->HasAuthority()) return;
+	if (OwnerCharacter && !OwnerCharacter->HasAuthority()) return; // 서버에서만 발사 처리 수행 (클라이언트는 ServerStartAttack에서 예측적으로 반응)
 
-	if (!EquippedWeapon || !OwnerCharacter) return;
+	if (!EquippedWeapon || !OwnerCharacter) return; //소유한 캐릭터나 장착된 무기가 유효하지 않으면 반환
 	
-	LastFireTime = GetWorld()->GetTimeSeconds(); // [Combat] 발사 시간 기록
+	LastFireTime = GetWorld()->GetTimeSeconds(); //발사 시점 업데이트 (쿨타임 체크용)
 
-	EquippedWeapon->StartFire(); //무기 발사 시작 (Weapon Logic)
-	MulticastFire(bIsAiming);
+	EquippedWeapon->StartFire(); //무기 발사 시작
+	MulticastFire(bIsAiming); //모든 클라이언트에서 발사 애니메이션 재생 (조준 상태 전달)
 }
 
 void UQPCombatComponent::MulticastFire_Implementation(bool bInIsAiming)
@@ -379,8 +395,7 @@ void UQPCombatComponent::TraceUnderCrosshairs(FHitResult& TraceHitResult)
 
 	FVector CorsshairWorldLocation, CorsshairWorldDirection; //월드 위치 및 방향 변수
 	
-	// [Crash Fix] Local Controller 명시적 획득 (GetPlayerController(0) 대신 Owner의 Controller 사용)
-	APlayerController* PC = Cast<APlayerController>(OwnerCharacter->GetController());
+	APlayerController* PC = Cast<APlayerController>(OwnerCharacter->GetController()); //플레이어 컨트롤러 가져오기
 	if (!PC) return; // Controller가 없으면 트레이스 불가
 
 	bool bScreenToWorld = UGameplayStatics::DeprojectScreenToWorld(
@@ -396,12 +411,13 @@ void UQPCombatComponent::TraceUnderCrosshairs(FHitResult& TraceHitResult)
 		const FVector End = Start + (CorsshairWorldDirection * TRACE_LENGTH); //끝 위치 설정 (80,000 유닛 앞)
 		
 		FCollisionQueryParams QueryParams;
-		QueryParams.AddIgnoredActor(OwnerCharacter); // [Fix] 자기 자신(캐릭터) 무시하여 엉뚱한 충돌 방지
+		QueryParams.AddIgnoredActor(OwnerCharacter); // 자기 자신(캐릭터) 무시하여 엉뚱한 충돌 방지
 		if (EquippedWeapon)
 		{
-			QueryParams.AddIgnoredActor(EquippedWeapon); // [Fix] 장착된 무기도 트레이스에서 제외 (자신의 무기에 시야가 가려지는 현상 방지)
+			QueryParams.AddIgnoredActor(EquippedWeapon); //장착된 무기도 트레이스에서 제외 (자신의 무기에 시야가 가려지는 현상 방지)
 		}
 
+		// 라인 트레이스 수행 (충돌 검사)
 		bool bHit = GetWorld()->LineTraceSingleByChannel(
 			TraceHitResult,
 			Start,
@@ -410,7 +426,7 @@ void UQPCombatComponent::TraceUnderCrosshairs(FHitResult& TraceHitResult)
 			QueryParams
 		);
 
-		// [Fix] 허공을 바라볼 때(충돌 없음) ImpactPoint가 (0,0,0)이 되어 캐릭터가 아래를 보는 문제 해결
+		// 충돌이 발생하지 않은 경우, 트레이스 끝 지점을 ImpactPoint로 설정하여 크로스헤어가 가리키는 위치를 유지
 		if (!bHit)
 		{
 			TraceHitResult.ImpactPoint = End;
@@ -423,6 +439,7 @@ FVector UQPCombatComponent::GetMuzzleHitTarget() const
 {
 	if (!EquippedWeapon) return FVector::ZeroVector;
 
+	// MuzzleFlash 소켓이 존재하는지 확인하고, 해당 소켓의 위치와 방향을 기반으로 트레이스하여 충돌 지점 계산
 	USkeletalMeshComponent* WeaponMesh = EquippedWeapon->GetWeaponMesh();
 	if (!WeaponMesh || !WeaponMesh->DoesSocketExist(TEXT("MuzzleFlash"))) return FVector::ZeroVector;
 
@@ -430,7 +447,7 @@ FVector UQPCombatComponent::GetMuzzleHitTarget() const
 	const FVector Start = MuzzleTransform.GetLocation();
 	const FVector End = Start + (MuzzleTransform.GetUnitAxis(EAxis::X) * TRACE_LENGTH);
 
-	FHitResult FireHit;
+	FHitResult FireHit; // 트레이스 결과 저장 변수
 	GetWorld()->LineTraceSingleByChannel(
 		FireHit,
 		Start,
@@ -438,7 +455,7 @@ FVector UQPCombatComponent::GetMuzzleHitTarget() const
 		ECollisionChannel::ECC_Visibility
 	);
 
-	if (FireHit.bBlockingHit)
+	if (FireHit.bBlockingHit) // 충돌이 발생한 경우, 충돌 지점을 반환
 	{
 		return FireHit.ImpactPoint;
 	}

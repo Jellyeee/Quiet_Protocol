@@ -7,26 +7,26 @@
 #include "Zombie_BTService_UpdateTarget.generated.h"
 
 /**
- * 
+ *
  */
 UCLASS()
 class PJ_QUIET_PROTOCOL_API UZombie_BTService_UpdateTarget : public UBTService_BlackboardBase
 {
 	GENERATED_BODY()
-	
+
 public:
 	UZombie_BTService_UpdateTarget(); //생성자 선언
 
 protected:
 	virtual void TickNode(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds) override; //TickNode 함수 재정의
 
-	UPROPERTY(EditAnywhere, Category="Target")
+	UPROPERTY(EditAnywhere, Category = "Target")
 	float DetectRange = 2000.f; //탐지 범위
 
-	UPROPERTY(EditAnywhere, Category="Target")
+	UPROPERTY(EditAnywhere, Category = "Target")
 	float LoseTargetRange = 3000.f; //타겟 상실 범위
 
-	UPROPERTY(EditAnywhere, Category="Target")
+	UPROPERTY(EditAnywhere, Category = "Target")
 	bool bRequireLineOfSight = true; //시야 요구 여부
 
 	UPROPERTY(EditAnywhere, Category = "Target")

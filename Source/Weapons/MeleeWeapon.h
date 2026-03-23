@@ -1,17 +1,17 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "WeaponBase.h"
 #include "MeleeWeapon.generated.h"
 
 /**
- * 
+ *
  */
 UCLASS()
 class PJ_QUIET_PROTOCOL_API AMeleeWeapon : public AWeaponBase
 {
 	GENERATED_BODY()
-	
+
 public:
 	AMeleeWeapon(); //생성자
 

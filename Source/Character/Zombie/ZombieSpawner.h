@@ -9,7 +9,7 @@ struct FZombieSpawnEntry
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Spawn")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Spawn")
 	TSubclassOf<class AZombieCharacter> ZombieClass; //좀비 클래스
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Spawn")
 	float Weight = 1.0f; //스폰 가중치
@@ -22,8 +22,8 @@ UCLASS()
 class PJ_QUIET_PROTOCOL_API AZombieSpawner : public AActor
 {
 	GENERATED_BODY()
-	
-public:	
+
+public:
 	AZombieSpawner();
 
 protected:
@@ -41,8 +41,8 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Spawn")
 	bool bAutoStart = true; //자동 시작 여부
 
-public:	
-	UFUNCTION(BlueprintCallable, Category="Spawn")
+public:
+	UFUNCTION(BlueprintCallable, Category = "Spawn")
 	void StartSpawning(); //스폰 시작 함수
 	UFUNCTION(BlueprintCallable, Category = "Spawn")
 	void StopSpawning(); //스폰 중지 함수
