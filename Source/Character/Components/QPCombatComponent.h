@@ -6,8 +6,8 @@
 #include "PJ_Quiet_Protocol/Commons/QPCombatTypes.h"
 #include "QPCombatComponent.generated.h"
 
-class AWeaponBase; //전방 선언
-class ACharacter; //전방 선언
+class AWeaponBase;
+class ACharacter;
 
 /**
 무기 타입이 변경될 때 브로드캐스트되는 델리게이트
@@ -18,8 +18,7 @@ UI 업데이트 (무기 아이콘, 탄약 표시 등)
 사운드/이펙트 시스템에 무기 변경 알림
 @param NewWeaponType 새로 장착된 무기의 타입 (EQPWeaponType)
  */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnWeaponTypeChanged,
-	EQPWeaponType, NewWeaponType); //무기 장착 델리게이트 선언
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnWeaponTypeChanged, EQPWeaponType, NewWeaponType);
 /**
 공격 상태가 변경될 때 브로드캐스트되는 델리게이트
 호출 시점: 캐릭터가 공격을 시작하거나 멈출 때
@@ -29,7 +28,7 @@ UI 업데이트 (공격 모션 표시 등)
 사운드/이펙트 시스템에 공격 상태 변경 알림
 @param bNewIsAttacking 새로운 공격 상태 (true: 공격 중, false: 비공격 중)
  */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAttackStateChanged, bool, bNewIsAttacking);//공격 상태 변경 델리게이트 선언
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAttackStateChanged, bool, bNewIsAttacking);
 
 /*
  * 조준 상태 변경 델리게이트
@@ -55,7 +54,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Combat|Weapon")
 	FORCEINLINE EQPWeaponType GetEquippedWeaponType() const { return EquippedWeaponType; } //장착된 무기 타입 반환 함수
 	UFUNCTION(BlueprintPure, Category = "Combat|Weapon")
-	FORCEINLINE bool HasWeapon() const { return EquippedWeapon != nullptr; } //무기 장착 여부 반환 함수
+	FORCEINLINE bool HasWeapon() const { return EquippedWeapon != nullptr; }
 
 	//공격 기능
 	UFUNCTION(BlueprintCallable, Category = "Combat|Attack")
@@ -66,24 +65,36 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Combat|Reload")
 	void Reload(); // 재장전 함수
 
+	UFUNCTION(BlueprintCallable, Category = "Combat|Reload")
+	void FinishReload(); // 권총/라이플 재장전 완료 처리
+
+	UFUNCTION(BlueprintCallable, Category = "Combat|Reload")
+	void InsertShotgunShell(); // 샷건 1발 장전 처리
+
+	UFUNCTION(BlueprintCallable, Category = "Combat|Reload")
+	void CancelReload(); // 샷건 장전 중 사격 시 취소 처리
+
+	UFUNCTION(BlueprintPure, Category = "Combat|Reload")
+	FORCEINLINE bool IsReloading() const { return bIsReloading; }
+
 	UFUNCTION(BlueprintPure, Category = "Combat|Attack")
-	FORCEINLINE bool IsAttacking() const { return bIsAttacking; } //공격 중인지 여부 반환 함수
+	FORCEINLINE bool IsAttacking() const { return bIsAttacking; }
 	
 	UFUNCTION(BlueprintCallable, Category = "Combat|Aim") 
 	void SetAiming(bool bNewAiming); //조준 상태 설정 함수
 
 	UFUNCTION(BlueprintPure, Category = "Combat|Aim")
-	FORCEINLINE bool IsAiming() const { return bIsAiming; } //조준 중인지 여부 반환 함수
+	FORCEINLINE bool IsAiming() const { return bIsAiming; }
 
 	UFUNCTION(BlueprintPure, Category = "Combat|Wait")
 	FVector GetMuzzleHitTarget() const; // 실제 총구가 가리키는 위치 반환
 	
 	UPROPERTY(BlueprintAssignable, Category = "Combat")
-	FOnAttackStateChanged OnAttackStateChanged; //공격 상태 변경 델리게이트 인스턴스
+	FOnAttackStateChanged OnAttackStateChanged;
 	UPROPERTY(BlueprintAssignable, Category = "Combat")
-	FOnWeaponTypeChanged OnWeaponTypeChanged; //무기 타입 변경 델리게이트 인스턴스
+	FOnWeaponTypeChanged OnWeaponTypeChanged;
 	UPROPERTY(BlueprintAssignable, Category = "Combat")
-	FOnAimStateChanged OnAimStateChanged; //조준 상태 변경 델리게이트 인스턴스
+	FOnAimStateChanged OnAimStateChanged;
 	 
 
 protected:
@@ -107,6 +118,9 @@ protected:
 
 	UFUNCTION(NetMulticast, Unreliable)
 	void MulticastReload(); // 재장전 애니메이션/이펙트 동기화용 함수 (모든 클라이언트에서 재장전 효과 재생)
+
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastCancelReload(); // 재장전 취소 동기화용 함수 (몽타주 중지 등)
 
 	UFUNCTION(Server, Unreliable)
 	void ServerSetHitTarget(const FVector_NetQuantize& TraceHitTarget_Arg); // 서버에 HitTarget을 알리는 함수 (네트워크 최적화용, Unreliable로 설정)
@@ -152,6 +166,9 @@ private:
 	
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Aim", Replicated, meta = (AllowPrivateAccess = "true"))
 	bool bIsAiming = false; // 조준 중인지 여부
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Reload", Replicated, meta = (AllowPrivateAccess = "true"))
+	bool bIsReloading = false; // 장전 중인지 여부
 
 	FTimerHandle FireTimer; //발사 간격 제어용 타이머 핸들
 

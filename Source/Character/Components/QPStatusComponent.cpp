@@ -4,8 +4,8 @@
 
 UQPStatusComponent::UQPStatusComponent()
 {
-	PrimaryComponentTick.bCanEverTick = true;
-	SetIsReplicatedByDefault(true);
+	PrimaryComponentTick.bCanEverTick = true; // 매 프레임 업데이트 활성화
+	SetIsReplicatedByDefault(true); // 컴포넌트 리플리케이션 활성화
 }
 
 void UQPStatusComponent::BeginPlay()
@@ -14,7 +14,7 @@ void UQPStatusComponent::BeginPlay()
 
 	Character = Cast<AQPCharacter>(GetOwner());
 
-	// 서버에서 시작할 때 체력과 스테미나 초기화
+	// 서버 권한이 있는 경우 초기 상태값 설정
 	if (Character && Character->HasAuthority())
 	{
 		Health = MaxHealth;
@@ -22,12 +22,14 @@ void UQPStatusComponent::BeginPlay()
 	}
 	else
 	{
+		// 클라이언트에서도 로컬 예측을 위해 초기값 설정
 		Health = MaxHealth;
 		CurrentStamina = MaxStamina;
 	}
 
-	OnHealthChanged.Broadcast(Health / MaxHealth); // 초기 체력 상태 브로드캐스트
-	OnStaminaChanged.Broadcast(CurrentStamina / MaxStamina); // 초기 스테미나 상태 브로드캐스트
+	// UI 업데이트를 위한 초기 방송(Broadcast)
+	OnHealthChanged.Broadcast(Health / MaxHealth);
+	OnStaminaChanged.Broadcast(CurrentStamina / MaxStamina);
 }
 
 void UQPStatusComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -36,11 +38,12 @@ void UQPStatusComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 
 	if (!Character) return;
 
+	// 서버 또는 로컬 플레이어 직접 제어 시 스태미나 계산 수행
 	if (Character->HasAuthority() || Character->IsLocallyControlled())
 	{
 		bool bStaminaChanged = false;
-
-		// 달리는 중이면 스테미나 감소, 아니면 회복
+		
+		// 스프린트(질주) 중일 때 스태미나 소모
 		if (Character->IsSprinting())
 		{
 			if (CurrentStamina > 0.f)
@@ -49,16 +52,18 @@ void UQPStatusComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 				if (CurrentStamina <= 0.f)
 				{
 					CurrentStamina = 0.f;
-					bCanSprint = false;
+					bCanSprint = false; // 스태미나 고갈 시 질주 불가 상태로 전환
 					Character->StopSprint();
 				}
 				bStaminaChanged = true;
 			}
-			TimeSinceLastSprint = 0.f;
+			TimeSinceLastSprint = 0.f; // 마지막 질주 시간 초기화
 		}
 		else 
 		{
+			// 질주 중이 아닐 때 스태미나 회복 로직
 			TimeSinceLastSprint += DeltaTime;
+			// 일정 지연 시간(RegenDelay) 이후부터 회복 시작
 			if (TimeSinceLastSprint >= StaminaRegenDelay && CurrentStamina < MaxStamina)
 			{
 				CurrentStamina += StaminaRegenRate * DeltaTime;
@@ -68,6 +73,7 @@ void UQPStatusComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 				}
 				bStaminaChanged = true;
 
+				// 최소 요구치 이상 회복되면 다시 질주 가능 상태로 전환
 				if (!bCanSprint && CurrentStamina >= MaxStamina * MinStaminaPercentToSprint)
 				{
 					bCanSprint = true;
@@ -75,7 +81,7 @@ void UQPStatusComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 			}
 		}
 
-		// 스테미나가 변경되었다면 이동속도 업데이트 및 UI 갱신 이벤트 브로드캐스트
+		// 스태미나 수치가 변경되었다면 속도 업데이트 및 UI 델리게이트 호출
 		if (bStaminaChanged)
 		{
 			Character->UpdateMovementSpeed();
@@ -98,9 +104,11 @@ void UQPStatusComponent::ReceiveDamage(float DamageAmount)
 {
 	if (bIsDead) return;
 
-	Health = FMath::Clamp(Health - DamageAmount, 0.f, MaxHealth); // 체력 감소 후 클램프하여 0 이하로 떨어지지 않도록 함
-	OnHealthChanged.Broadcast(Health / MaxHealth); // 체력 변경 이벤트 브로드캐스트
+	// 데미지 적용 및 체력 범위 클램핑 (0 ~ MaxHealth)
+	Health = FMath::Clamp(Health - DamageAmount, 0.f, MaxHealth);
+	OnHealthChanged.Broadcast(Health / MaxHealth);
 
+	// 체력이 0 이하가 되면 사망 처리
 	if (Health <= 0.f)
 	{
 		Die();
@@ -112,7 +120,7 @@ void UQPStatusComponent::Die()
 	if (bIsDead) return;
 
 	bIsDead = true;
-	OnDeath.Broadcast(); // 사망 이벤트 브로드캐스트
+	OnDeath.Broadcast();
 
 	if (Character)
 	{
@@ -122,27 +130,29 @@ void UQPStatusComponent::Die()
 
 void UQPStatusComponent::OnRep_Health()
 {
-	OnHealthChanged.Broadcast(Health / MaxHealth); // 체력 변경이 클라이언트에 반영될 때마다 UI 갱신 이벤트 브로드캐스트
+	// 서버로부터 복제된 체력 값이 변경되었을 때 클라이언트 UI 업데이트
+	OnHealthChanged.Broadcast(Health / MaxHealth);
 }
 
 void UQPStatusComponent::OnRep_Stamina()
 {
+	// 서버로부터 복제된 스태미나 값이 변경되었을 때 관련 로직 동기화
 	if (Character)
 	{
-		Character->UpdateMovementSpeed(); // 클라이언트 측 이동속도 갱신
+		Character->UpdateMovementSpeed();
 	}
-	OnStaminaChanged.Broadcast(CurrentStamina / MaxStamina); // 스테미나 변경이 클라이언트에 반영될 때마다 UI 갱신 이벤트 브로드캐스트
+	OnStaminaChanged.Broadcast(CurrentStamina / MaxStamina);
 }
 
 void UQPStatusComponent::ServerUpdateStamina_Implementation(float NewStamina)
 {
-	CurrentStamina = NewStamina; // 서버에서 스테미나 업데이트 후 클라이언트에 반영
-	if (CurrentStamina <= 0.f) // 스테미나가 0 이하로 떨어지면 달리기 불가능 상태로 전환
+	CurrentStamina = NewStamina;
+	if (CurrentStamina <= 0.f)
 	{
 		bCanSprint = false;
 		if (Character) Character->StopSprint();
 	}
-	else if (CurrentStamina >= MaxStamina * MinStaminaPercentToSprint) // 스테미나가 충분히 회복되면 다시 달리기 가능 상태로 전환
+	else if (CurrentStamina >= MaxStamina * MinStaminaPercentToSprint)
 	{
 		bCanSprint = true;
 	}

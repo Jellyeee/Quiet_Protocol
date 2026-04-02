@@ -16,35 +16,26 @@ AZombieCharacter::AZombieCharacter()
 	PrimaryActorTick.bCanEverTick = true;
 
 
-	bUseControllerRotationPitch = false; //컨트롤러 피치 회전 사용 안함
-	bUseControllerRotationRoll = false; //컨트롤러 롤 회전 사용 안함
-	bUseControllerRotationYaw = false; //컨트롤러 요 회전 사용 안함
+	bUseControllerRotationPitch = false;
+	bUseControllerRotationRoll = false;
+	bUseControllerRotationYaw = false;
 
-	UCharacterMovementComponent* MoveComponent = GetCharacterMovement(); //캐릭터 무브먼트 컴포넌트 가져오기
-	MoveComponent->bOrientRotationToMovement = true; //이동 방향으로 회전 설정
-	MoveComponent->RotationRate = FRotator(0.f, 150.f, 0.f); //회전 속도 설정
+	UCharacterMovementComponent* MoveComponent = GetCharacterMovement();
+	MoveComponent->bOrientRotationToMovement = true;
+	MoveComponent->RotationRate = FRotator(0.f, 150.f, 0.f);
 
 }
 
 void AZombieCharacter::BeginPlay()
 {
 	Super::BeginPlay();
-	GetCharacterMovement()->MaxWalkSpeed = WalkSpeed; //기본 걷기 속도 설정
-	Health = MaxHealth; //체력 초기화
+	GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
+	Health = MaxHealth;
 }
 
 void AZombieCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-	//GetCharacterMovement()->MaxWalkSpeed = (TargetActor ? ChaseSpeed : WalkSpeed); //타겟이 있으면 추격 속도, 없으면 걷기 속도
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage((uint64)this, 0.f, FColor::Green,
-			FString::Printf(TEXT("Target=%s Max=%.1f Walk=%.1f Chase=%.1f HP=%.1f/%.1f"),
-				TargetActor ? *TargetActor->GetName() : TEXT("None"),
-				GetCharacterMovement()->MaxWalkSpeed, WalkSpeed, ChaseSpeed,
-				Health, MaxHealth));
-	}
 }
 
 float AZombieCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
@@ -64,20 +55,19 @@ float AZombieCharacter::TakeDamage(float DamageAmount, FDamageEvent const& Damag
 
 void AZombieCharacter::SetTarget(AActor* NewTarget)
 {
-	TargetActor = NewTarget; //새 타겟 설정
-	GetCharacterMovement()->MaxWalkSpeed = (TargetActor ? ChaseSpeed : WalkSpeed); //타겟이 있으면 추격 속도, 없으면 걷기 속도
+	TargetActor = NewTarget;
+	GetCharacterMovement()->MaxWalkSpeed = (TargetActor ? ChaseSpeed : WalkSpeed);
 }
 
 bool AZombieCharacter::CanAttackTarget() const
 {
-	if (!TargetActor) return false; //타겟이 없으면 공격 불가
-	if (bIsAttacking) return false; //이미 공격 중이면 공격 불가
+	if (!TargetActor) return false;
+	if (bIsAttacking) return false;
 
-	const float Now = GetWorld()->GetTimeSeconds(); //현재 시간
-	if (Now - LastAttackTime < AttackCoolDown) return false; //공격 쿨타임
-	const float DistanceToTarget = FVector::Dist(GetActorLocation(), TargetActor->GetActorLocation()); //타겟과의 거리
-	return DistanceToTarget <= AttackRange; //공격 범위 내에 있는지 확인
-
+	const float Now = GetWorld()->GetTimeSeconds();
+	if (Now - LastAttackTime < AttackCoolDown) return false;
+	const float DistanceToTarget = FVector::Dist(GetActorLocation(), TargetActor->GetActorLocation());
+	return DistanceToTarget <= AttackRange;
 }
 void AZombieCharacter::StartAttack()
 {
@@ -94,21 +84,21 @@ void AZombieCharacter::StartAttack()
 	//);
 
 	if (!AnimInstance || !AttackMontage) {
-		bIsAttacking = false; //애니메이션 인스턴스나 공격 몽타주가 없으면 공격 상태 해제
-		ExitAttackRootMotionMode(); //루트 모션 모드 종료
-		return; //함수 종료
+		bIsAttacking = false;
+		ExitAttackRootMotionMode();
+		return;
 	}
-	if (AnimInstance->Montage_IsPlaying(AttackMontage)) //이미 공격 몽타주가 재생 중이면 함수 종료
+	if (AnimInstance->Montage_IsPlaying(AttackMontage))
 	{
-		return; //함수 종료
+		return;
 	}
-	LastAttackTime = GetWorld()->GetTimeSeconds(); //마지막 공격 시간 갱신
-	bIsAttacking = true; //공격 상태 설정
-	EnterAttackRootMotionMode(); //루트 모션 모드 진입
-	FOnMontageEnded EndDelegate; //몽타주 종료 델리게이트 생성
-	EndDelegate.BindUObject(this, &AZombieCharacter::OnAttackMontageEnded); //종료 콜백 함수 바인딩
-	AnimInstance->Montage_SetEndDelegate(EndDelegate, AttackMontage); //종료 델리게이트 설정
-	AnimInstance->Montage_Play(AttackMontage); //공격 몽타주 재생
+	LastAttackTime = GetWorld()->GetTimeSeconds();
+	bIsAttacking = true;
+	EnterAttackRootMotionMode();
+	FOnMontageEnded EndDelegate;
+	EndDelegate.BindUObject(this, &AZombieCharacter::OnAttackMontageEnded);
+	AnimInstance->Montage_SetEndDelegate(EndDelegate, AttackMontage);
+	AnimInstance->Montage_Play(AttackMontage);
 }
 
 void AZombieCharacter::AttackHit()
@@ -137,9 +127,9 @@ void AZombieCharacter::AttackEnd()
 
 void AZombieCharacter::OnAttackMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 {
-	if (Montage != AttackMontage) return; //종료된 몽타주가 공격 몽타주가 아니면 함수 종료
-	bIsAttacking = false; //공격 상태 해제
-	ExitAttackRootMotionMode(); //루트 모션 모드 종료
+	if (Montage != AttackMontage) return;
+	bIsAttacking = false;
+	ExitAttackRootMotionMode();
 }
 
 void AZombieCharacter::EnterAttackRootMotionMode()
@@ -163,7 +153,6 @@ void AZombieCharacter::ExitAttackRootMotionMode()
 
 void AZombieCharacter::Die()
 {
-	if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("ZombieCharacter: Die() called. Calling MulticastDie."));
 	MulticastDie();
 }
 
@@ -196,12 +185,8 @@ void AZombieCharacter::MulticastDie_Implementation()
 	// 3. 사망 몽타주 재생
 	if (DeathMontage && GetMesh() && GetMesh()->GetAnimInstance())
 	{
-		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Cyan, TEXT("ZombieCharacter: DeathMontage and AnimInstance valid."));
-
 		float MontageDuration = GetMesh()->GetAnimInstance()->Montage_Play(DeathMontage);
 		
-		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Orange, FString::Printf(TEXT("ZombieCharacter: Played Montage. Duration = %f"), MontageDuration));
-
 		if (MontageDuration > 0.f)
 		{
 			TWeakObjectPtr<AZombieCharacter> WeakThis(this);
@@ -214,10 +199,6 @@ void AZombieCharacter::MulticastDie_Implementation()
 				}
 			}), FMath::Max(0.1f, MontageDuration - 0.15f), false);
 		}
-	}
-	else
-	{
-		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("ZombieCharacter: FAILED to play montage. Missing DeathMontage or AnimInstance."));
 	}
 	
 	// 4. 루트 모션이나 기타 이동 관련 초기화

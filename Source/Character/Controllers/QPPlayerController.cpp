@@ -16,23 +16,24 @@
 void AQPPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
-	if (!IsLocalController()) return; // 로컬 컨트롤러인지 확인
+	if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Cyan, TEXT("QPPlayerController BeginPlay"));
+	if (!IsLocalController()) return;
 	if (PickupWidgetClass) {
-		PickupWidget = CreateWidget<UQPPickupWidget>(this, PickupWidgetClass); // 위젯 인스턴스 생성
+		PickupWidget = CreateWidget<UQPPickupWidget>(this, PickupWidgetClass);
 		if (PickupWidget) {
-			PickupWidget->AddToViewport(999); // 뷰포트에 추가
-			PickupWidget->SetTargetActor(nullptr); // 타겟 액터 초기화
-			PickupWidget->SetVisibility(ESlateVisibility::Hidden); // 위젯 숨기기
+			PickupWidget->AddToViewport(999);
+			PickupWidget->SetTargetActor(nullptr);
+			PickupWidget->SetVisibility(ESlateVisibility::Hidden);
 		}
 	}
 	if (InventoryWidgetClass)
 	{
-		InventoryWidget = CreateWidget<UUserWidget>(this, InventoryWidgetClass); // 인벤토리 위젯 인스턴스 생성
+		InventoryWidget = CreateWidget<UUserWidget>(this, InventoryWidgetClass);
 		if (InventoryWidget) {
-			InventoryWidget->AddToViewport(10); // 뷰포트에 추가
-			InventoryWidget->SetVisibility(ESlateVisibility::Hidden); // 인벤토리 위젯 숨기기
+			InventoryWidget->AddToViewport(10);
+			InventoryWidget->SetVisibility(ESlateVisibility::Hidden);
 
-			SetLootListVisible(false); // 전리품 목록 위젯 숨기기
+			SetLootListVisible(false);
 		}
 	}
 }
@@ -47,21 +48,23 @@ void AQPPlayerController::SetupInputComponent()
 
 void AQPPlayerController::SetPickupTarget(AActor* NewTarget)
 {
-	if (!IsLocalController()) return; // 로컬 컨트롤러인지 확인
-	if (!PickupWidget) return; // 픽업 위젯이 유효한지 확인
+	if (!IsLocalController()) return;
+	if (!PickupWidget) return;
 	if (NewTarget && !IsValid(NewTarget)) {
-		NewTarget = nullptr; // 유효하지 않은 타겟은 nullptr로 설정
+		NewTarget = nullptr;
 	}
 	if (!PickupWidget->IsInViewport()) {
-		PickupWidget->AddToViewport(999); // 뷰포트에 추가
+		PickupWidget->AddToViewport(999);
 	}
-	PickupWidget->SetTargetActor(NewTarget); // 타겟 액터 설정
+	PickupWidget->SetTargetActor(NewTarget);
 	const bool bShow = (NewTarget != nullptr);
-	PickupWidget->SetVisibility(bShow ? ESlateVisibility::Visible : ESlateVisibility::Hidden); // 위젯 표시 여부 설정
+	PickupWidget->SetVisibility(bShow ? ESlateVisibility::Visible : ESlateVisibility::Hidden);
 }
 
 void AQPPlayerController::ToggleInventory()
 {
+	if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Yellow, TEXT("ToggleInventory Called"));
+
 	SetLootListVisible(false); // 전리품 목록 위젯 숨기기
 	bLootInventoryOpen = false; // 전리품 인벤토리 열림 상태 초기화
 
@@ -104,35 +107,44 @@ void AQPPlayerController::SetInventoryOpen(bool bOpen)
 			InventoryWidget->SetVisibility(ESlateVisibility::Hidden); // 인벤토리 위젯 숨기기
 		}
 	}
+	else if (!InventoryWidget && !InventoryWidgetClass)
+	{
+		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("InventoryWidgetClass is NOT SET in PlayerController Blueprint!"));
+	}
 
-	if (!InventoryWidget) return; // 인벤토리 위젯이 유효한지 확인
+	if (!InventoryWidget) 
+	{
+		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("InventoryWidget is NULL - Check your Blueprint settings"));
+		return; // 인벤토리 위젯이 유효한지 확인
+	}
+	
+	if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Green, FString::Printf(TEXT("Inventory Open: %s"), bInventoryOpen ? TEXT("TRUE") : TEXT("FALSE")));
 
 	if (bInventoryOpen) {
-		InventoryWidget->SetVisibility(ESlateVisibility::Visible); // 인벤토리 위젯 표시
-		SetShowMouseCursor(true); // 마우스 커서 표시
-		bEnableClickEvents = true; // 클릭 이벤트 활성화
+		InventoryWidget->SetVisibility(ESlateVisibility::Visible);
+		SetShowMouseCursor(true);
+		bEnableClickEvents = true;
 
-		//이동/시야 입력 차단
-		SetIgnoreMoveInput(true); // 이동 입력 무시
-		SetIgnoreLookInput(true); // 시야 입력 무시
+		SetIgnoreMoveInput(true);
+		SetIgnoreLookInput(true);
 
-		FInputModeGameAndUI InputMode; // 입력 모드 설정
-		InputMode.SetHideCursorDuringCapture(false); // 커서 캡처 중 커서 숨기지 않음
-		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock); // 마우스 잠금 동작 설정
-		InputMode.SetWidgetToFocus(InventoryWidget->TakeWidget()); // 위젯에 포커스 설정
-		SetInputMode(InputMode); // 입력 모드 적용
+		FInputModeGameAndUI InputMode;
+		InputMode.SetHideCursorDuringCapture(false);
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		InputMode.SetWidgetToFocus(InventoryWidget->TakeWidget());
+		SetInputMode(InputMode);
 	}
 	else
 	{
-		InventoryWidget->SetVisibility(ESlateVisibility::Hidden); // 인벤토리 위젯 숨기기
-		SetShowMouseCursor(false); // 마우스 커서 숨기기
-		bEnableClickEvents = false; // 클릭 이벤트 비활성화
-		bEnableMouseOverEvents = false; // 마우스 오버 이벤트 비활성화
-		//이동/시야 입력 허용
-		SetIgnoreMoveInput(false); // 이동 입력 허용
-		SetIgnoreLookInput(false); // 시야 입력 허용
-		FInputModeGameOnly InputMode; // 게임 전용 입력 모드 설정
-		SetInputMode(InputMode); // 입력 모드 적용
+		InventoryWidget->SetVisibility(ESlateVisibility::Hidden);
+		SetShowMouseCursor(false);
+		bEnableClickEvents = false;
+		bEnableMouseOverEvents = false;
+		
+		SetIgnoreMoveInput(false);
+		SetIgnoreLookInput(false);
+		FInputModeGameOnly InputMode;
+		SetInputMode(InputMode);
 	}
 }
 

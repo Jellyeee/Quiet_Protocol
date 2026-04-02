@@ -8,139 +8,147 @@ UInventoryComponent::UInventoryComponent()
 
 bool UInventoryComponent::AddItem(UItemDataAsset* ItemData, int32 Quantity)
 {
-	if (!ItemData) return false; //유효한 아이템 데이터인지 확인
-	if (Quantity <= 0) return false; //유효한 수량인지 확인
+	if (!ItemData) return false;
+	if (Quantity <= 0) return false;
 
-	for (int32 x = 0; x < Width; ++x) //인벤토리 가로 탐색
+	// 인벤토리의 모든 슬롯을 순회하며 빈 공간 찾기 (왼쪽 상단부터)
+	for (int32 x = 0; x < Width; ++x)
 	{
-		for (int32 y = 0; y < Height; ++y) //인벤토리 세로 탐색
+		for (int32 y = 0; y < Height; ++y)
 		{
-			const FIntPoint Position(x, y); //현재 위치 설정
-			if(AddItemAt(ItemData, Quantity, Position)) //해당 위치에 아이템 추가 시도
+			const FIntPoint Position(x, y);
+			// 해당 위치에 아이템 추가 시도
+			if(AddItemAt(ItemData, Quantity, Position))
 			{
-				UE_LOG(LogTemp, Warning, TEXT("[INV] AddItem OK: Slots=%d"), Slots.Num()); //디버그 로그 출력
-				return true; //아이템 추가 성공
+				UE_LOG(LogTemp, Warning, TEXT("[INV] AddItem OK: Slots=%d"), Slots.Num());
+				return true;
 			}
 		}
 	}
-	return false; //아이템 추가 실패
+	return false;
 }
 bool UInventoryComponent::AddItemAt(UItemDataAsset* ItemData, int32 Quantity, const FIntPoint& Position)
 {
-	if (!ItemData) return false; //유효한 아이템 데이터인지 확인
-	if (Quantity <= 0) return false; //유효한 수량인지 확인
-	if (!CanPlaceItemAt(ItemData, Position)) return false; //해당 위치에 아이템 배치가 가능한지 확인
+	if (!ItemData) return false;
+	if (Quantity <= 0) return false;
+	// 배치 가능 여부 확인
+	if (!CanPlaceItemAt(ItemData, Position)) return false;
 
-	FInventorySlot NewSlot; //새 슬롯 생성
-	NewSlot.Position = Position; //슬롯 위치 설정
-	NewSlot.Item.ItemData = ItemData; //아이템 데이터 설정
-	NewSlot.Item.Quantity = Quantity; //아이템 수량 설정
-	Slots.Add(NewSlot); //슬롯을 인벤토리에 추가
-	OnInventoryChanged.Broadcast(); //인벤토리 변경 알림 브로드캐스트
-	return true; //아이템 추가 성공
+	// 새 슬롯 생성 및 데이터 설정
+	FInventorySlot NewSlot;
+	NewSlot.Position = Position;
+	NewSlot.Item.ItemData = ItemData;
+	NewSlot.Item.Quantity = Quantity;
+	
+	Slots.Add(NewSlot); // 인벤토리 배열에 추가
+	OnInventoryChanged.Broadcast(); // 변경 사항 알림
+	return true;
 }
 
 bool UInventoryComponent::RemoveItemAt(const FIntPoint& Position)
 {
-	for (int32 i = 0; i < Slots.Num(); ++i) //인벤토리 슬롯 순회
+	for (int32 i = 0; i < Slots.Num(); ++i)
 	{
-		if (Slots[i].Position == Position) //해당 위치의 슬롯 좌표가 일치하다면
+		if (Slots[i].Position == Position)
 		{
-			Slots.RemoveAt(i); //슬롯 제거
-			OnInventoryChanged.Broadcast(); //인벤토리 변경 알림 브로드캐스트
-			return true; //아이템 제거 성공
+			Slots.RemoveAt(i);
+			OnInventoryChanged.Broadcast();
+			return true;
 		}
 	}
-	return false; //아이템 제거 실패
+	return false;
 }
 
 bool UInventoryComponent::MoveItem(const FIntPoint& From, const FIntPoint& To)
 {
-	if (From == To) return true; //같은 위치로 이동 시도 시 성공 처리
+	if (From == To) return true;
 
-	const int32 FoundIndex = Slots.IndexOfByPredicate([&](const FInventorySlot& S) //인벤토리 슬롯에서 이동할 슬롯 찾기
+	const int32 FoundIndex = Slots.IndexOfByPredicate([&](const FInventorySlot& S)
 		{
-			return S.Position == From; //해당 위치의 슬롯 좌표가 일치하다면
+			return S.Position == From;
 		});
 
-	if (FoundIndex == INDEX_NONE) //해당 위치에 아이템이 없다면
+	if (FoundIndex == INDEX_NONE)
 	{
-		return false; //이동 실패
+		return false;
 	}
 
-	FInventorySlot MovingSlot = Slots[FoundIndex]; //이동할 슬롯 복사
-	Slots.RemoveAt(FoundIndex); //이동할 슬롯 인벤토리에서 제거
+	FInventorySlot MovingSlot = Slots[FoundIndex];
+	Slots.RemoveAt(FoundIndex);
 
-	if (!CanPlaceItemAt(MovingSlot.Item.ItemData, To)) //새 위치에 아이템 배치가 가능한지 확인
+	if (!CanPlaceItemAt(MovingSlot.Item.ItemData, To))
 	{
-		Slots.Insert(MovingSlot, FoundIndex); // 원래 위치로 복원
-		return false; //이동 실패
+		Slots.Insert(MovingSlot, FoundIndex);
+		return false;
 	}
 
-	MovingSlot.Position = To; //슬롯 위치 업데이트
-	Slots.Add(MovingSlot);//업데이트된 슬롯을 인벤토리에 추가
-	OnInventoryChanged.Broadcast(); //인벤토리 변경 알림 브로드캐스트
-	return true; //이동 성공
+	MovingSlot.Position = To;
+	Slots.Add(MovingSlot);
+	OnInventoryChanged.Broadcast();
+	return true;
 }
 
 bool UInventoryComponent::CanPlaceItemAt(UItemDataAsset* ItemData, const FIntPoint& Position)
 {
-	if (!ItemData) return false; //유효한 아이템 데이터인지 확인
+	if (!ItemData) return false;
 
-	FIntPoint ItemSize = ItemData->ItemSize; //아이템 크기 가져오기
-	ItemSize.X = FMath::Max(1, ItemData->ItemSize.X); //아이템 가로 크기 최소값 설정
-	ItemSize.Y = FMath::Max(1, ItemData->ItemSize.Y); //아이템 세로 크기 최소값 설정
+	// 아이템 크기 보정 (최소 1x1)
+	FIntPoint ItemSize = ItemData->ItemSize;
+	ItemSize.X = FMath::Max(1, ItemData->ItemSize.X);
+	ItemSize.Y = FMath::Max(1, ItemData->ItemSize.Y);
 
-	for (int32 x = 0; x < ItemSize.X; ++x) //아이템 가로 크기만큼 반복
+	// 아이템의 모든 칸이 인벤토리 경계 내에 있는지 확인
+	for (int32 x = 0; x < ItemSize.X; ++x)
 	{
-		for (int32 y = 0; y < ItemSize.Y; ++y) //아이템 세로 크기만큼 반복
+		for (int32 y = 0; y < ItemSize.Y; ++y)
 		{
-			if (!IsWithinBounds(Position + FIntPoint(x, y))) //인벤토리 범위 내에 있는지 확인
+			if (!IsWithinBounds(Position + FIntPoint(x, y)))
 			{
-				return false; //범위 벗어남
+				return false;
 			}
 		}
 	}
-	if(IsOverlapping(ItemData, Position)) //다른 아이템과 겹치는지 확인
+	// 기존 아이템과의 중첩 여부 확인
+	if(IsOverlapping(ItemData, Position))
 	{
-		return false; //겹침
+		return false;
 	}
-	return true; //아이템 배치 가능
+	return true;
 }
 
 bool UInventoryComponent::FindSlotAt(const FIntPoint& Position, FInventorySlot& OutSlot) const
 {
-	for (const FInventorySlot& Slot : Slots) //인벤토리 슬롯 순회
+	for (const FInventorySlot& Slot : Slots)
 	{
-		if (Slot.Position == Position) //해당 위치의 슬롯 좌표가 일치하다면
+		if (Slot.Position == Position)
 		{
-			OutSlot = Slot; //출력 슬롯에 해당 슬롯 정보 복사
-			return true; //슬롯 반환
+			OutSlot = Slot;
+			return true;
 		}
 	}
-	return false; //슬롯을 찾지 못함
+	return false;
 }
 
 bool UInventoryComponent::FindSlotContaining(const FIntPoint& Cell, FInventorySlot& Outslot) const
 {
 	for (const FInventorySlot& Slot : Slots)
 	{
-		if (!Slot.Item.ItemData) continue; //유효한 아이템 데이터인지 확인
+		if (!Slot.Item.ItemData) continue;
 
-		const FIntPoint SlotPos = Slot.Position; //슬롯 위치
-		FIntPoint SlotSize = Slot.Item.ItemData->ItemSize; //슬롯 아이템 크기
-		SlotSize.X = FMath::Max(1, SlotSize.X); //슬롯 아이템 가로 크기 최소값 설정
-		SlotSize.Y = FMath::Max(1, SlotSize.Y); //슬롯 아이템 세로 크기 최소값 설정
+		const FIntPoint SlotPos = Slot.Position;
+		FIntPoint SlotSize = Slot.Item.ItemData->ItemSize;
+		SlotSize.X = FMath::Max(1, SlotSize.X);
+		SlotSize.Y = FMath::Max(1, SlotSize.Y);
 		
-		const bool bInX = (Cell.X >= SlotPos.X) && (Cell.X < SlotPos.X + SlotSize.X); //X축 포함 여부
-		const bool bInY = (Cell.Y >= SlotPos.Y) && (Cell.Y < SlotPos.Y + SlotSize.Y); //Y축 포함 여부
+		const bool bInX = (Cell.X >= SlotPos.X) && (Cell.X < SlotPos.X + SlotSize.X);
+		const bool bInY = (Cell.Y >= SlotPos.Y) && (Cell.Y < SlotPos.Y + SlotSize.Y);
 		if (bInX && bInY)
 		{
-			Outslot = Slot; //출력 슬롯에 해당 슬롯 정보 복사
-			return true; //슬롯 반환
+			Outslot = Slot;
+			return true;
 		}
 	}
-	return false; //슬롯을 찾지 못함
+	return false;
 }
 
 
@@ -152,30 +160,82 @@ bool UInventoryComponent::IsWithinBounds(const FIntPoint& Position) const
 
 bool UInventoryComponent::IsOverlapping(UItemDataAsset* ItemData, const FIntPoint& Position) const
 {
-	if (!ItemData) return false; //유효한 아이템 데이터인지 확인
+	if (!ItemData) return false;
 
-	FIntPoint ItemSize = ItemData->ItemSize; //아이템 크기 가져오기
-	ItemSize.X = FMath::Max(1, ItemData->ItemSize.X); //아이템 가로 크기 최소값 설정
-	ItemSize.Y = FMath::Max(1, ItemData->ItemSize.Y); //아이템 세로 크기 최소값 설정
+	FIntPoint ItemSize = ItemData->ItemSize;
+	ItemSize.X = FMath::Max(1, ItemData->ItemSize.X);
+	ItemSize.Y = FMath::Max(1, ItemData->ItemSize.Y);
 
-	for (const FInventorySlot& Slot : Slots) //인벤토리 슬롯 순회
+	// 현재 설치된 모든 슬롯과 대조하여 AABB 충돌 검사 수행
+	for (const FInventorySlot& Slot : Slots)
 	{
-		if (!Slot.Item.ItemData) continue; //유효한 아이템 데이터인지 확인
+		if (!Slot.Item.ItemData) continue;
 
-		const FIntPoint ExistPos = Slot.Position; //기존 슬롯 위치
-		FIntPoint ExistSize = Slot.Item.ItemData->ItemSize; //기존 아이템 크기
-		ExistSize.X = FMath::Max(1, ExistSize.X); //기존 아이템 가로 크기 최소값 설정
-		ExistSize.Y = FMath::Max(1, ExistSize.Y); //기존 아이템 세로 크기 최소값 설정
+		const FIntPoint ExistPos = Slot.Position;
+		FIntPoint ExistSize = Slot.Item.ItemData->ItemSize;
+		ExistSize.X = FMath::Max(1, ExistSize.X);
+		ExistSize.Y = FMath::Max(1, ExistSize.Y);
 
-		//사격형 충돌 검사
-		const bool bOverlapX = Position.X < ExistPos.X + ExistSize.X && Position.X + ItemSize.X > ExistPos.X; //X축 겹침 여부
-		const bool bOverlapY = Position.Y < ExistPos.Y + ExistSize.Y && Position.Y + ItemSize.Y > ExistPos.Y; //Y축 겹침 여부
-		if(bOverlapX && bOverlapY) //둘 다 겹친다면
+		// X축 및 Y축 중첩 여부 판단
+		const bool bOverlapX = Position.X < ExistPos.X + ExistSize.X && Position.X + ItemSize.X > ExistPos.X;
+		const bool bOverlapY = Position.Y < ExistPos.Y + ExistSize.Y && Position.Y + ItemSize.Y > ExistPos.Y;
+		if(bOverlapX && bOverlapY)
 		{
-			return true; //겹침
+			return true; // 중첩됨
 		}
 	}
-	return false; //겹침 아님
+	return false;
 }
 
+int32 UInventoryComponent::GetTotalAmmo(EQPWeaponType WeaponType) const
+{
+	int32 TotalAmt = 0;
+	for (const FInventorySlot& Slot : Slots)
+	{
+		if (Slot.Item.ItemData && Slot.Item.ItemData->ItemType == EItemType::EIT_Ammo && Slot.Item.ItemData->TargetWeaponType == WeaponType)
+		{
+			TotalAmt += Slot.Item.Quantity;
+		}
+	}
+	return TotalAmt;
+}
 
+int32 UInventoryComponent::ConsumeAmmo(EQPWeaponType WeaponType, int32 AmountToConsume)
+{
+	int32 Consumed = 0;
+	int32 RemainingToConsume = AmountToConsume;
+
+	// 뒤에서부터 순회하여 요소를 제거할 때 인덱스 꼬임을 방지 (LIFO 방식에 가까움)
+	for (int32 i = Slots.Num() - 1; i >= 0; --i)
+	{
+		if (RemainingToConsume <= 0) break;
+
+		FInventorySlot& Slot = Slots[i];
+		// 아이템 타입이 탄약이고, 대상 무기 타입이 일치하는지 확인
+		if (Slot.Item.ItemData && Slot.Item.ItemData->ItemType == EItemType::EIT_Ammo && Slot.Item.ItemData->TargetWeaponType == WeaponType)
+		{
+			if (Slot.Item.Quantity <= RemainingToConsume)
+			{
+				// 슬롯의 탄약을 전부 소모
+				Consumed += Slot.Item.Quantity;
+				RemainingToConsume -= Slot.Item.Quantity;
+				Slots.RemoveAt(i); // 수량이 0이 된 슬롯 제거
+			}
+			else
+			{
+				// 슬롯의 탄약 일부만 소모
+				Slot.Item.Quantity -= RemainingToConsume;
+				Consumed += RemainingToConsume;
+				RemainingToConsume = 0;
+			}
+		}
+	}
+
+	// 실제 소모가 일어났다면 인벤토리 변경 알림
+	if (Consumed > 0)
+	{
+		OnInventoryChanged.Broadcast();
+	}
+	
+	return Consumed;
+}

@@ -3,8 +3,7 @@
 
 UBTTask_ClearInvestigating::UBTTask_ClearInvestigating()
 {
-	NodeName = TEXT("Clear Investigating"); //노드 이름 설정
-	InvestigatingKey.AddBoolFilter(this, GET_MEMBER_NAME_CHECKED(UBTTask_ClearInvestigating, InvestigatingKey)); //블랙보드 키에 불린 타입 필터 추가)
+	NodeName = TEXT("Clear Investigating");
 }
 
 
@@ -13,6 +12,6 @@ EBTNodeResult::Type UBTTask_ClearInvestigating::ExecuteTask(UBehaviorTreeCompone
 	UBlackboardComponent* BlackboardComponent = OwnerComp.GetBlackboardComponent();
 	if (!BlackboardComponent) return EBTNodeResult::Failed;
 
-	BlackboardComponent->SetValueAsBool(InvestigatingKey.SelectedKeyName, false);
+	BlackboardComponent->ClearValue(InvestigatingKey.SelectedKeyName);
 	return EBTNodeResult::Succeeded;
 }

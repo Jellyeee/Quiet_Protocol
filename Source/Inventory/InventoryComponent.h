@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "PJ_Quiet_Protocol/Inventory/InventoryHeaders/InventoryItem.h"
+#include "PJ_Quiet_Protocol/Commons/QPCombatTypes.h"
 #include "InventoryComponent.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnInventoryChanged);//인벤토리 변경 델리게이트(UI갱신 트리거)
@@ -46,6 +47,12 @@ public:
 	bool FindSlotContaining(const FIntPoint& Cell, FInventorySlot& Outslot) const; //특정 셀을 포함하는 슬롯 찾기 함수
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	bool AddItemAt(UItemDataAsset* ItemData, int32 Quantity, const FIntPoint& Position); //특정 위치에 아이템 추가 함수
+
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Ammo")
+	int32 ConsumeAmmo(EQPWeaponType WeaponType, int32 AmountToConsume);
+
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Ammo")
+	int32 GetTotalAmmo(EQPWeaponType WeaponType) const;
 
 private:
 	bool IsWithinBounds(const FIntPoint& Position) const; //인벤토리 범위 내에 있는지 확인하는 함수

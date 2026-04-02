@@ -35,6 +35,8 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Animation")
 	bool bIsAttacking = false; // 공격 중인지 여부
 	UPROPERTY(BlueprintReadOnly, Category = "Animation")
+	bool bIsReloading = false; // 장전 중인지 여부
+	UPROPERTY(BlueprintReadOnly, Category = "Animation")
 	bool bIsAiming = false; // 조준 중인지 여부
 	UPROPERTY(BlueprintReadOnly, Category = "Animation")
 	bool bIsStopping = false; // 정지 중인지 (관성 이동 중) 여부

@@ -8,6 +8,9 @@
 #include "GameFramework/Pawn.h" 
 #include "GameFramework/PawnMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "PJ_Quiet_Protocol/Weapons/GunWeapon.h"
+#include "PJ_Quiet_Protocol/Inventory/InventoryComponent.h"
+#include "PJ_Quiet_Protocol/Character/Components/QPStatusComponent.h"
 
 void AQPCrosshair::DrawHUD()
 {
@@ -88,6 +91,63 @@ void AQPCrosshair::DrawHUD()
 	{
 		FVector2D SpreadBottom(0.f, Spread.Y);
 		DrawCrosshairPart(CrosshairBottom, ViewportCenter, SpreadBottom);
+	}
+
+	// 현재 장착된 무기의 탄약수 표시
+	if (Pawn)
+	{
+		AQPCharacter* Character = Cast<AQPCharacter>(Pawn);
+		if (Character && !Character->IsDead())
+		{
+			UQPCombatComponent* Combat = Character->FindComponentByClass<UQPCombatComponent>();
+			UInventoryComponent* Inventory = Character->FindComponentByClass<UInventoryComponent>();
+			UQPStatusComponent* Status = Character->FindComponentByClass<UQPStatusComponent>();
+
+			if (Status)
+			{
+				float HealthPercent = FMath::Clamp(Status->GetHealth() / FMath::Max(1.f, Status->GetMaxHealth()), 0.f, 1.f);
+				float StaminaPercent = FMath::Clamp(Status->GetCurrentStamina() / FMath::Max(1.f, Status->GetMaxStamina()), 0.f, 1.f);
+
+				float BarWidth = 300.f;
+				float BarHeight = 15.f;
+				float StartX = ViewportCenter.X - (BarWidth / 2.f);
+				float StartY = ViewportSize.Y - 120.f; // 중앙 하단
+
+				// 체력 게이지 (회색) 배경 및 전경
+				DrawRect(FLinearColor(0.1f, 0.1f, 0.1f, 0.6f), StartX, StartY, BarWidth, BarHeight);
+				DrawRect(FLinearColor(0.5f, 0.5f, 0.5f, 1.f), StartX, StartY, BarWidth * HealthPercent, BarHeight);
+
+				// 스태미나 게이지 (회색 + 약간의 하늘색) 배경 및 전경
+				float StaminaY = StartY + BarHeight + 10.f;
+				DrawRect(FLinearColor(0.1f, 0.15f, 0.2f, 0.6f), StartX, StaminaY, BarWidth, BarHeight);
+				DrawRect(FLinearColor(0.4f, 0.6f, 0.7f, 1.f), StartX, StaminaY, BarWidth * StaminaPercent, BarHeight); 
+			}
+
+			if (Combat && Combat->HasWeapon())
+			{
+				if (AGunWeapon* Gun = Cast<AGunWeapon>(Combat->GetEquippedWeapon()))
+				{
+					int32 TotalAmmo = 0;
+					if (Inventory)
+					{
+						TotalAmmo = Inventory->GetTotalAmmo(Combat->GetEquippedWeaponType());
+					}
+					
+					FString AmmoText = FString::Printf(TEXT("%d / %d"), Gun->GetCurrentAmmo(), TotalAmmo);
+					float TextX = ViewportSize.X * 0.85f;
+					float TextY = ViewportSize.Y * 0.9f;
+					
+					if (GEngine && GEngine->GetLargeFont())
+					{
+						DrawText(AmmoText, FLinearColor::White, TextX, TextY, GEngine->GetLargeFont(), 2.0f, false);
+					}
+					else
+					{
+						DrawText(AmmoText, FLinearColor::White, TextX, TextY);
+					}
+				}
+			}
+		}
 	}
 }
 

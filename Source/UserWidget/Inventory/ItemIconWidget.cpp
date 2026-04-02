@@ -14,150 +14,149 @@
 
 void UItemIconWidget::Setup(UInventoryComponent* InInventory, UItemDataAsset* InItemData, int32 InQuantity, const FIntPoint& InFrom, const FIntPoint& InItemSize, float InCellSize, TSubclassOf<UUserWidget> InDragVisualClass, UInventoryGridWidget* InOwningGrid)
 {
-	Inventory = InInventory; // 소유한 인벤토리 컴포넌트 설정
-	ItemData = InItemData; // 아이템 데이터 에셋 설정
-	Quantity = InQuantity; // 수량 설정
-	From = InFrom; // 그리드 내 위치 설정
+	Inventory = InInventory;
+	ItemData = InItemData;
+	Quantity = InQuantity;
+	From = InFrom;
 
-	ItemSize = InItemSize; // 아이템 크기 설정
-	ItemSize.X = FMath::Max(1, ItemSize.X); // 최소 크기 1로 설정
-	ItemSize.Y = FMath::Max(1, ItemSize.Y); // 최소 크기 1로 설정
+	ItemSize = InItemSize;
+	ItemSize.X = FMath::Max(1, ItemSize.X);
+	ItemSize.Y = FMath::Max(1, ItemSize.Y);
 
-	CellSize = InCellSize; // 셀 크기 설정
-	DragVisualClass = InDragVisualClass; // 드래그 비주얼 클래스 설정
-	OwningGrid = InOwningGrid; // 소유한 그리드 위젯 설정
+	CellSize = InCellSize;
+	DragVisualClass = InDragVisualClass;
+	OwningGrid = InOwningGrid;
 
-	ApplyVisual(); // 시각적 요소 적용
+	ApplyVisual();
 }
 
 FReply UItemIconWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
-	if (InMouseEvent.IsMouseButtonDown(EKeys::RightMouseButton)) //우클릭: 컨텍스트 메뉴 열기
+	if (InMouseEvent.IsMouseButtonDown(EKeys::RightMouseButton))
 	{
-		if (!ContextMenuClass) return FReply::Handled(); // 컨텍스트 메뉴 클래스가 유효한지 확인
+		if (!ContextMenuClass) return FReply::Handled();
 
-		if (OpenedMenu) // 이미 열려있는 메뉴가 있으면 닫기
+		if (OpenedMenu)
 		{
-			OpenedMenu->RemoveFromParent(); // 메뉴 제거
-			OpenedMenu = nullptr; // 포인터 초기화
+			OpenedMenu->RemoveFromParent();
+			OpenedMenu = nullptr;
 		}
 
-		OpenedMenu = CreateWidget<UInventoryContextMenuWidget>(GetOwningPlayer(), ContextMenuClass); // 컨텍스트 메뉴 위젯 생성
-		if (!OpenedMenu) return FReply::Handled(); // 메뉴 생성 실패 시 처리
+		OpenedMenu = CreateWidget<UInventoryContextMenuWidget>(GetOwningPlayer(), ContextMenuClass);
+		if (!OpenedMenu) return FReply::Handled();
 
-		OpenedMenu->InitMenu(From); // 메뉴 초기화
+		OpenedMenu->InitMenu(From);
 
-		OpenedMenu->OnEquip.BindLambda([this](const FIntPoint& Cell) //아이템 장착 콜백 바인딩
+		OpenedMenu->OnEquip.BindLambda([this](const FIntPoint& Cell)
 			{
-				if (AQPCharacter* Character = Cast<AQPCharacter>(GetOwningPlayerPawn())) // 플레이어 폰을 QPCharacter로 캐스팅
+				if (AQPCharacter* Character = Cast<AQPCharacter>(GetOwningPlayerPawn()))
 				{
-					Character->EquipInventoryItemAt(Cell); // 아이템 장착
+					Character->EquipInventoryItemAt(Cell);
 				}
 			});
 
-		OpenedMenu->OnDrop.BindLambda([this](const FIntPoint& Cell) //아이템 버리기 콜백 바인딩
+		OpenedMenu->OnDrop.BindLambda([this](const FIntPoint& Cell)
 			{
-				if (AQPCharacter* Character = Cast<AQPCharacter>(GetOwningPlayerPawn())) // 플레이어 폰을 QPCharacter로 캐스팅
+				if (AQPCharacter* Character = Cast<AQPCharacter>(GetOwningPlayerPawn()))
 				{
-					Character->DropInventoryItemAt(Cell); // 아이템 버리기
+					Character->DropInventoryItemAt(Cell);
 				}
 			});
 
-		OpenedMenu->AddToViewport(9999); // 메뉴를 뷰포트에 추가
+		OpenedMenu->AddToViewport(9999);
 
-		APlayerController* PlayerController = GetOwningPlayer(); // 플레이어 컨트롤러 가져오기
-		if (!PlayerController) return FReply::Handled(); // 플레이어 컨트롤러
+		APlayerController* PlayerController = GetOwningPlayer();
+		if (!PlayerController) return FReply::Handled();
 		float X = 0.f, Y = 0.f;
-		if(PlayerController->GetMousePosition(X, Y)) // 마우스 위치 가져오기
+		if(PlayerController->GetMousePosition(X, Y))
 		{
-			const FVector2D MousePosition(X, Y); // 마우스 위치 설정
-			OpenedMenu->SetPositionInViewport(MousePosition, false); // 메뉴 위치 설정
+			const FVector2D MousePosition(X, Y);
+			OpenedMenu->SetPositionInViewport(MousePosition, false);
 		}
 
-		OpenedMenu->SetKeyboardFocus(); // 메뉴에 키보드 포커스 설정
-		return FReply::Handled(); // 처리 완료 반환
+		OpenedMenu->SetKeyboardFocus();
+		return FReply::Handled();
 	}
 
-	if (InMouseEvent.IsMouseButtonDown(EKeys::LeftMouseButton)) // 좌클릭: 드래그 시작
+	if (InMouseEvent.IsMouseButtonDown(EKeys::LeftMouseButton))
 	{
-		return UWidgetBlueprintLibrary::DetectDragIfPressed(InMouseEvent, this, EKeys::LeftMouseButton).NativeReply; // 드래그 감지 시작
+		return UWidgetBlueprintLibrary::DetectDragIfPressed(InMouseEvent, this, EKeys::LeftMouseButton).NativeReply;
 	}
 
-	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent); // 기본 동작 호출
+	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
 }
 
 void UItemIconWidget::NativeOnDragDetected(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, UDragDropOperation*& OutOperation)
 {
-	Super::NativeOnDragDetected(InGeometry, InMouseEvent, OutOperation); // 기본 동작 호출
+	Super::NativeOnDragDetected(InGeometry, InMouseEvent, OutOperation);
 
-	if (!Inventory || !ItemData) return; // 인벤토리 컴포넌트와 아이템 데이터가 유효한지 확인
+	if (!Inventory || !ItemData) return;
 
 	UInventoryDragOperation* DragOp = Cast<UInventoryDragOperation>(
 		UWidgetBlueprintLibrary::CreateDragDropOperation(UInventoryDragOperation::StaticClass())
-	); // 드래그 드롭 오퍼레이션 생성
+	);
 	if (!DragOp) return;
 
-	DragOp->SourceInventory = Inventory; // 드래그 출처 인벤토리 설정
-	DragOp->FromCell = From; // 드래그 출처 셀 위치 설정
-	DragOp->ItemData = ItemData; // 드래그 아이템 데이터 설정
-	DragOp->Quantity = Quantity; // 드래그 수량 설정
+	DragOp->SourceInventory = Inventory;
+	DragOp->FromCell = From;
+	DragOp->ItemData = ItemData;
+	DragOp->Quantity = Quantity;
 
-	DragOp->DragLocalOffset = InGeometry.AbsoluteToLocal(InMouseEvent.GetScreenSpacePosition()); // 드래그 로컬 오프셋 설정
-	DragOp->ItemPixelSize = FVector2D(ItemSize.X * CellSize, ItemSize.Y * CellSize); // 아이템 픽셀 크기 설정
-	if (DragVisualClass) // 드래그 비주얼 클래스가 유효한지 확인
+	DragOp->DragLocalOffset = InGeometry.AbsoluteToLocal(InMouseEvent.GetScreenSpacePosition());
+	DragOp->ItemPixelSize = FVector2D(ItemSize.X * CellSize, ItemSize.Y * CellSize);
+	if (DragVisualClass)
 	{
-		UUserWidget* Visual = CreateWidget<UUserWidget>(GetOwningPlayer(), DragVisualClass); // 드래그 비주얼 위젯 생성
-		if (Visual) // 비주얼 위젯이 유효한지 확인
+		UUserWidget* Visual = CreateWidget<UUserWidget>(GetOwningPlayer(), DragVisualClass);
+		if (Visual)
 		{
-			Visual->SetDesiredSizeInViewport(DragOp->ItemPixelSize); // 뷰포트 내 원하는 크기 설정
-			if (UItemDragVisualWidget* DragVisual = Cast<UItemDragVisualWidget>(Visual)) // 비주얼 위젯을 아이템 드래그 비주얼 위젯으로 캐스팅
+			Visual->SetDesiredSizeInViewport(DragOp->ItemPixelSize);
+			if (UItemDragVisualWidget* DragVisual = Cast<UItemDragVisualWidget>(Visual))
 			{
-				DragVisual->SetVisual(ItemData, Quantity, DragOp->ItemPixelSize); // 비주얼 설정
+				DragVisual->SetVisual(ItemData, Quantity, DragOp->ItemPixelSize);
 			}
 
-			DragOp->DefaultDragVisual = Visual; // 드래그 비주얼 설정
+			DragOp->DefaultDragVisual = Visual;
 		}
 	}
 
-	DragOp->Pivot = EDragPivot::MouseDown; // 드래그 피벗 설정
-	OutOperation = DragOp; // 출력 오퍼레이션 설정
+	DragOp->Pivot = EDragPivot::MouseDown;
+	OutOperation = DragOp;
 }
 
 
 bool UItemIconWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
 {
-	// 아이콘 위에 드랍해도 Grid가 처리하게 전달
-	if (OwningGrid) // 소유한 그리드 위젯이 유효한지 확인
+	if (OwningGrid)
 	{
-		const FVector2D ScreenPos = InDragDropEvent.GetScreenSpacePosition(); // 스크린 위치 가져오기
-		return OwningGrid->HandleDropFromScreenPos(InOperation, ScreenPos); // 드롭 처리
+		const FVector2D ScreenPos = InDragDropEvent.GetScreenSpacePosition();
+		return OwningGrid->HandleDropFromScreenPos(InOperation, ScreenPos);
 	}
-	return false; // 드롭 처리 실패 반환
+	return false;
 }
 
 void UItemIconWidget::NativeOnDragCancelled(const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
 {
-	Super::NativeOnDragCancelled(InDragDropEvent, InOperation); // 기본 동작 호출
+	Super::NativeOnDragCancelled(InDragDropEvent, InOperation);
 }
 
 void UItemIconWidget::ApplyVisual()
 {
-	if (ItemImage && ItemData && ItemData->ItemIcon) // 아이템 이미지와 데이터가 유효한지 확인
+	if (ItemImage && ItemData && ItemData->ItemIcon)
 	{
-		ItemImage->SetBrushFromTexture(ItemData->ItemIcon); // 아이템 이미지 설정
+		ItemImage->SetBrushFromTexture(ItemData->ItemIcon);
 	}
 
-	if (QuantityText) // 수량 텍스트가 유효한지 확인
+	if (QuantityText)
 	{
-		if (Quantity > 1) // 수량이 0보다 큰지 확인
+		if (Quantity > 1)
 		{
-			QuantityText->SetText(FText::AsNumber(Quantity)); // 수량 텍스트 설정
-			QuantityText->SetVisibility(ESlateVisibility::HitTestInvisible); // 텍스트 가시성 설정
+			QuantityText->SetText(FText::AsNumber(Quantity));
+			QuantityText->SetVisibility(ESlateVisibility::HitTestInvisible);
 		}
 		else
 		{
-			QuantityText->SetText(FText::GetEmpty()); // 수량 텍스트 비우기
-			QuantityText->SetVisibility(ESlateVisibility::Collapsed); // 텍스트 가시성 설정
+			QuantityText->SetText(FText::GetEmpty());
+			QuantityText->SetVisibility(ESlateVisibility::Collapsed);
 		}
 	}
 }

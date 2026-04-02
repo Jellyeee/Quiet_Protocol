@@ -6,23 +6,23 @@
 AWorldItemActor::AWorldItemActor()
 {
 	PrimaryActorTick.bCanEverTick = false;
-	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root")); //루트 씬 컴포넌트 생성
-	SetRootComponent(Root); //루트 컴포넌트 설정
+	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
+	SetRootComponent(Root);
 
 	ItemData = nullptr;
 	Quantity = 1;
-	ItemMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("ItemMesh")); //아이템 메쉬 컴포넌트 생성
-	ItemMesh->SetupAttachment(Root); //루트 컴포넌트에 부착
-	ItemMesh->SetSimulatePhysics(true); //물리 시뮬레이션 활성화
-	ItemMesh->SetEnableGravity(true); //중력 활성화
-	ItemMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics); //충돌 활성화
-	ItemMesh->SetCollisionObjectType(ECC_WorldDynamic); //충돌 객체 타입 설정
-	ItemMesh->SetCollisionResponseToAllChannels(ECR_Block); //모든 채널에 블록 응답 설정
-	ItemMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore); //플레이어 채널에 무시 응답 설정
-	ItemMesh->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore); //카메라 채널에 무시 응답 설정
-	PickupSphere = CreateDefaultSubobject<USphereComponent>(TEXT("PickupSphere")); //픽업 스피어 컴포넌트 생성
-	PickupSphere->SetupAttachment(Root); //루트 컴포넌트에 부착
-	PickupSphere->SetSphereRadius(PickupSphereRadius); //픽업 스피어 반지름 설정
+	ItemMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("ItemMesh"));
+	ItemMesh->SetupAttachment(Root);
+	ItemMesh->SetSimulatePhysics(false);
+	ItemMesh->SetEnableGravity(true);
+	ItemMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	ItemMesh->SetCollisionObjectType(ECC_WorldDynamic);
+	ItemMesh->SetCollisionResponseToAllChannels(ECR_Block);
+	ItemMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+	ItemMesh->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+	PickupSphere = CreateDefaultSubobject<USphereComponent>(TEXT("PickupSphere"));
+	PickupSphere->SetupAttachment(Root);
+	PickupSphere->SetSphereRadius(PickupSphereRadius);
 
 	PickupSphere->SetCollisionEnabled(ECollisionEnabled::QueryOnly); // 쿼리 전용 충돌 설정
 	PickupSphere->SetCollisionResponseToAllChannels(ECR_Ignore); // 모든 채널 무시
@@ -35,20 +35,19 @@ AWorldItemActor::AWorldItemActor()
 
 void AWorldItemActor::OnPickupBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
-	if (AQPCharacter* QPCharacter = Cast<AQPCharacter>(OtherActor)) //겹친 액터가 QPCharacter인지 확인
+	if (AQPCharacter* QPCharacter = Cast<AQPCharacter>(OtherActor))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("World Item overlapped with QPCharacter")); //로그 출력
-		QPCharacter->SetOverlappingWorldItem(this); //겹치는 월드 아이템 설정
+		QPCharacter->SetOverlappingWorldItem(this);
 	}
 }
 
 void AWorldItemActor::OnPickupEnd(UPrimitiveComponent* OverlappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
 {
-	if (AQPCharacter* QPCharacter = Cast<AQPCharacter>(OtherActor)) //겹친 액터가 QPCharacter인지 확인
+	if (AQPCharacter* QPCharacter = Cast<AQPCharacter>(OtherActor))
 	{
 		if (QPCharacter->GetOverlappingWorldItem() == this)
 		{
-			QPCharacter->SetOverlappingWorldItem(nullptr); //겹치는 월드 아이템 해제
+			QPCharacter->SetOverlappingWorldItem(nullptr);
 		}
 	}
 }
@@ -56,7 +55,6 @@ void AWorldItemActor::OnPickupEnd(UPrimitiveComponent* OverlappedComp, AActor* O
 void AWorldItemActor::BeginPlay()
 {
 	Super::BeginPlay();
-	//픽업 스피어의 겹침 이벤트 바인딩
 	if (PickupSphere)
 	{
 		PickupSphere->OnComponentBeginOverlap.AddDynamic(this, &AWorldItemActor::OnPickupBegin);

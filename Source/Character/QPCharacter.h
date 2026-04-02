@@ -10,6 +10,16 @@ class UQPCombatComponent; // 전방 선언
 class AWeaponBase; // 전방 선언
 class UInventoryComponent; // 전방 선언
 
+/**
+ * AQPCharacter
+ * 
+ * 플레이어 캐릭터의 기본 클래스로, 이동, 전투, 인벤토리, 카메라 제어 및 네트워크 동기화를 담당합니다.
+ * 주요 기능:
+ * - 이동 시스템 (걷기, 달리기, 앉기)
+ * - 전투 시스템 (컴포넌트 기반 무기 장착 및 공격)
+ * - 인벤토리 시스템 (아이템 획득, 버리기, 장착)
+ * - 카메라 동적 제어 (조준, 앉기, 달리기 시 FOV 변화)
+ */
 UCLASS()
 class PJ_QUIET_PROTOCOL_API AQPCharacter : public ACharacter
 {
@@ -22,7 +32,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Combat|Weapon")
 	void SetOverlappingWeapon(AWeaponBase* Weapon);
 	UFUNCTION(BlueprintCallable, Category = "Combat|Weapon")
-	FORCEINLINE AWeaponBase* GetOverlappingWeapon() const { return OverlappingWeapon; } //겹쳐진 무기 반환 함수
+	FORCEINLINE AWeaponBase* GetOverlappingWeapon() const { return OverlappingWeapon; }
 	UFUNCTION(BlueprintPure, Category = "Combat")
 	FORCEINLINE FVector GetDesiredCameraOffset() const 
 	{ 
@@ -40,16 +50,19 @@ public:
 			return Result;
 		}
 		return bIsCrouched ? CrouchCameraPosOffset : StandingCameraOffset; 
-	} //원하는 카메라 오프셋 반환
+	}
 	UFUNCTION(BlueprintPure, Category = "Combat")
-	FORCEINLINE UQPCombatComponent* GetCombatComponent() const { return CombatComponent; } //전투 컴포넌트 반환 함수
+	FORCEINLINE UQPCombatComponent* GetCombatComponent() const { return CombatComponent; }
 	UFUNCTION(BlueprintPure, Category = "Status")
-	FORCEINLINE UQPStatusComponent* GetStatusComponent() const { return StatusComponent; } //상태 컴포넌트 반환 함수
+	FORCEINLINE UQPStatusComponent* GetStatusComponent() const { return StatusComponent; }
 	UFUNCTION(BlueprintPure, Category = "Combat")
-	FORCEINLINE EQPWeaponType GetWeaponType() const { return Weapontype; } //장착된 무기 타입 반환 함수
+	FORCEINLINE EQPWeaponType GetWeaponType() const { return Weapontype; }
+	/** 캐릭터가 현재 달리기 상태인지 확인 */
 	UFUNCTION(BlueprintPure, Category = "Combat")
-	bool IsSprinting() const; //앞으로 달리기는 중인지 반환 함수
-	bool IsAiming() const; //조준 중인지
+	bool IsSprinting() const;
+
+	/** 캐릭터가 현재 조준 상태인지 확인 */
+	bool IsAiming() const; 
 
 	UFUNCTION(BlueprintPure, Category = "Inventory")
 	FORCEINLINE class UInventoryComponent* GetInventoryComponent() const { return InventoryComponent; } //인벤토리 컴포넌트 반환 함수
@@ -68,17 +81,27 @@ public:
 	FORCEINLINE float GetAO_Pitch() const { return AO_Pitch;  } // 현재 애니메이션 오프셋의 Pitch 값을 반환
 	FORCEINLINE bool IsTurningInPlace() const { return bIsTurningInPlace; } // 제자리 회전 중인지 반환
 
-	void PlayFireMontage(bool bAming); // 무기 발사 몽타주 재생 함수
-	void PlayReloadMontage(); // 재장전 몽타주 재생 함수
+	/** 무기 발사 애니메이션 재생 (조준 여부에 따라 다른 몽타주 재생 지원) */
+	void PlayFireMontage(bool bAming); 
 
+	/** 재장전 애니메이션 재생 */
+	void PlayReloadMontage(); 
+
+	/** 데미지 처리 (표준 TakeDamage 오버라이드) */
 	virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent, class AController* EventInstigator, AActor* DamageCauser) override;
 
+	/** 캐릭터 사망 여부 반환 */
 	UFUNCTION(BlueprintPure, Category = "Health")
-	bool IsDead() const; // 사망 여부 반환
+	bool IsDead() const; 
 
-	void StopSprint(); //달리기 멈춤
-	void UpdateMovementSpeed(); //움직임 속도 업데이트
-	void Die(); // 사망 처리 함수
+	/** 달리기 강제 중지 */
+	void StopSprint(); 
+
+	/** 현재 상태(조준, 앉기 등)에 맞춰 걷기 속도 갱신 */
+	void UpdateMovementSpeed(); 
+
+	/** 사망 로직 실행 (래그돌 전환, 카메라 상태 변경 등) */
+	void Die(); 
 
 protected:
 	virtual void BeginPlay() override;
@@ -86,22 +109,37 @@ protected:
 	virtual void OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) override; //일어서기 시작시 호출
 
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
-	UQPCombatComponent* CombatComponent; //전투 컴포넌트
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Status", meta = (AllowPrivateAccess = "true"))
-	UQPStatusComponent* StatusComponent; //상태 컴포넌트
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
-	class USpringArmComponent* CameraBoom; //3인칭 플레이를 위한 스프링암 
+	// =============================================================================
+	// 컴포넌트 및 기본 설정
+	// =============================================================================
 
+	/** 전투 로직(무기 관리, 공격 등)을 담당하는 컴포넌트 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
+	UQPCombatComponent* CombatComponent; 
+
+	/** 캐릭터 상태(체력, 스태미나 등)를 관리하는 컴포넌트 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Status", meta = (AllowPrivateAccess = "true"))
+	UQPStatusComponent* StatusComponent; 
+
+	/** 3인칭 카메라 거리 조절을 위한 스프링 암 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
-	class UCameraComponent* FollowCamera; //플레이어를 따라다니는 카메라
+	class USpringArmComponent* CameraBoom; 
+
+	/** 플레이어 시점을 담당하는 카메라 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
-	EQPWeaponType Weapontype = EQPWeaponType::EWT_None; //장착된 무기 타입
+	class UCameraComponent* FollowCamera; 
+
+	/** 현재 장착 중인 무기의 종류 (애니메이션 및 속도 결정에 사용) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
+	EQPWeaponType Weapontype = EQPWeaponType::EWT_None; 
+
+	/** 무기 타입이 변경되었을 때 호출되는 이벤트 핸들러 */
 	UFUNCTION()
-	void HandleWeaponTypeChanged(EQPWeaponType NewWeaponType); //무기 타입 변경 핸들러
+	void HandleWeaponTypeChanged(EQPWeaponType NewWeaponType); 
 	
+	/** 조준 상태 변경 시 이동 속도 등을 동기화하는 핸들러 */
 	UFUNCTION()
-	void HandleAimStateChanged(bool bIsAiming); // 조준 상태 변경 핸들러 (속도 동기화)
+	void HandleAimStateChanged(bool bIsAiming); 
 
 	//움직임 속도 변수들
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
@@ -188,10 +226,37 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	UAnimMontage* ReloadMontage; // 재장전 몽타주
 
+	// =============================================================================
+	// [Network] 서버 통신 함수 (RPC)
+	// =============================================================================
+
+	/** 클라이언트에서 달리기를 시작할 때 서버에 알림 */
 	UFUNCTION(Server, Reliable)
 	void ServerStartSprint();
+
+	/** 클라이언트에서 달리기를 멈출 때 서버에 알림 */
 	UFUNCTION(Server, Reliable)
 	void ServerStopSprint();
+
+	/** 상호작용한 무기를 서버에서 장착 처리 */
+	UFUNCTION(Server, Reliable)
+	void ServerEquipOverlappingWeapon(class AWeaponBase* Weapon);
+
+	/** 월드에 존재하던 아이템 액터를 서버에서 제거 (인벤토리 획득 시) */
+	UFUNCTION(Server, Reliable)
+	void ServerDestroyPickupActor(class AActor* PickupActor);
+
+	/** 특정 클래스의 무기를 서버에서 스폰하고 장착 */
+	UFUNCTION(Server, Reliable)
+	void ServerSpawnAndEquipWeapon(TSubclassOf<class AWeaponBase> WeaponClass);
+
+	/** 버려진 아이템을 월드 좌표에 서버에서 생성 */
+	UFUNCTION(Server, Reliable)
+	void ServerSpawnWorldItem(class UItemDataAsset* ItemData, int32 Quantity, FVector Location);
+
+	/** 장착 중인 무기를 버리는 로직을 서버에서 실행 */
+	UFUNCTION(Server, Reliable)
+	void ServerTryDropEquipped();
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
@@ -199,6 +264,13 @@ private:
 	void UpdateCameraDynamics(float DeltaTime);
 	void UpdateDeathCamera(float DeltaTime);
 	void UpdateRotationMode();
+	
+	// 소음(발소리) 발생 관련 로직
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
+	class UPawnNoiseEmitterComponent* NoiseEmitterComponent;
+	
+	float FootstepNoiseTimer = 0.f;
+	void UpdateFootstepNoise(float DeltaTime);
 	
 	// 사망 시 관전 카메라 이동 처리
 	void HandleDeathCameraInput(FVector MoveDirection, float Value);
@@ -226,8 +298,11 @@ private:
 	UPROPERTY(Replicated) // [Network] 절대 조준 Yaw 값 (For Stable IK)
 	float NetAimYaw; 
 
-	UPROPERTY(Replicated) // [Network] 절대 조준 Yaw 값 (For Stable IK)
-	float NetAimYaw; 
+	UPROPERTY()
+	class AWorldItemActor* OverlappingWorldItem = nullptr; //겹쳐진 월드 아이템 액터
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Inventory", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<class UInventoryComponent> InventoryComponent; //인벤토리 컴포넌트
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory", meta = (AllowPrivateAccess = "true"))
 	float EquipHoldThreshhold = 0.30f; //E를 이 시간 이상 누르면 인벤토리 저장

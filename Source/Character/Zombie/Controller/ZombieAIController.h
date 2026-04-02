@@ -1,12 +1,13 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #pragma once
 
 #include "CoreMinimal.h"
 #include "AIController.h"
+#include "Perception/AIPerceptionTypes.h"
 #include "ZombieAIController.generated.h"
 
 class UBehaviorTree;
+class UAIPerceptionComponent;
+class UAISenseConfig_Hearing;
 
 /**
  *
@@ -19,7 +20,17 @@ public:
 	AZombieAIController();
 protected:
 	virtual void OnPossess(APawn* InPawn) override;
+
+	UFUNCTION()
+	void OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus);
+
 public:
 	UPROPERTY(EditAnywhere, Category = "Zombie AI")
-	UBehaviorTree* BehaviorTreeAsset = nullptr; //행동 트리 에셋
+	UBehaviorTree* BehaviorTreeAsset = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Zombie AI|Perception")
+	UAIPerceptionComponent* ZombiePerceptionComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Zombie AI|Perception")
+	UAISenseConfig_Hearing* HearingConfig;
 };
