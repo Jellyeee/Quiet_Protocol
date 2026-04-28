@@ -3,9 +3,12 @@
 #include "Components/SceneComponent.h"
 #include "PJ_Quiet_Protocol/Character/QPCharacter.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Net/UnrealNetwork.h"
+
 AWorldItemActor::AWorldItemActor()
 {
 	PrimaryActorTick.bCanEverTick = false;
+	bReplicates = true;
 	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(Root);
 
@@ -60,4 +63,13 @@ void AWorldItemActor::BeginPlay()
 		PickupSphere->OnComponentBeginOverlap.AddDynamic(this, &AWorldItemActor::OnPickupBegin);
 		PickupSphere->OnComponentEndOverlap.AddDynamic(this, &AWorldItemActor::OnPickupEnd);
 	}
+}
+
+void AWorldItemActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(AWorldItemActor, ItemData);
+	DOREPLIFETIME(AWorldItemActor, Quantity);
+	DOREPLIFETIME(AWorldItemActor, AssignedSlotIndex);
+	DOREPLIFETIME(AWorldItemActor, AssignedCodeNumber);
 }

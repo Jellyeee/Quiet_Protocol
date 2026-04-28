@@ -18,17 +18,20 @@ void UQPStatusComponent::BeginPlay()
 	if (Character && Character->HasAuthority())
 	{
 		Health = MaxHealth;
+		Shield = 0.f; // 쉴드는 방어구 획득 시 증가
 		CurrentStamina = MaxStamina;
 	}
 	else
 	{
 		// 클라이언트에서도 로컬 예측을 위해 초기값 설정
 		Health = MaxHealth;
+		Shield = 0.f;
 		CurrentStamina = MaxStamina;
 	}
 
 	// UI 업데이트를 위한 초기 방송(Broadcast)
 	OnHealthChanged.Broadcast(Health / MaxHealth);
+	OnShieldChanged.Broadcast(Shield / MaxShield);
 	OnStaminaChanged.Broadcast(CurrentStamina / MaxStamina);
 }
 
@@ -95,6 +98,7 @@ void UQPStatusComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(UQPStatusComponent, Health);
+	DOREPLIFETIME(UQPStatusComponent, Shield);
 	DOREPLIFETIME(UQPStatusComponent, bIsDead);
 	DOREPLIFETIME(UQPStatusComponent, CurrentStamina);
 	DOREPLIFETIME(UQPStatusComponent, bCanSprint);
@@ -104,14 +108,45 @@ void UQPStatusComponent::ReceiveDamage(float DamageAmount)
 {
 	if (bIsDead) return;
 
-	// 데미지 적용 및 체력 범위 클램핑 (0 ~ MaxHealth)
-	Health = FMath::Clamp(Health - DamageAmount, 0.f, MaxHealth);
-	OnHealthChanged.Broadcast(Health / MaxHealth);
-
-	// 체력이 0 이하가 되면 사망 처리
-	if (Health <= 0.f)
+	float RemainingDamage = DamageAmount;
+	
+	// 쉴드가 있으면 먼저 깎음
+	if (Shield > 0.f)
 	{
-		Die();
+		if (Shield >= RemainingDamage)
+		{
+			Shield -= RemainingDamage;
+			RemainingDamage = 0.f;
+		}
+		else
+		{
+			RemainingDamage -= Shield;
+			Shield = 0.f;
+		}
+		OnShieldChanged.Broadcast(Shield / MaxShield);
+	}
+
+	// 남은 데미지를 체력에 적용
+	if (RemainingDamage > 0.f)
+	{
+		Health = FMath::Clamp(Health - RemainingDamage, 0.f, MaxHealth);
+		OnHealthChanged.Broadcast(Health / MaxHealth);
+
+		// 체력이 0 이하가 되면 사망 처리
+		if (Health <= 0.f)
+		{
+			Die();
+		}
+	}
+}
+
+void UQPStatusComponent::AddShield(float Amount)
+{
+	if (bIsDead) return;
+	if (Character && Character->HasAuthority())
+	{
+		Shield = FMath::Clamp(Shield + Amount, 0.f, MaxShield);
+		OnShieldChanged.Broadcast(Shield / MaxShield);
 	}
 }
 
@@ -132,6 +167,12 @@ void UQPStatusComponent::OnRep_Health()
 {
 	// 서버로부터 복제된 체력 값이 변경되었을 때 클라이언트 UI 업데이트
 	OnHealthChanged.Broadcast(Health / MaxHealth);
+}
+
+void UQPStatusComponent::OnRep_Shield()
+{
+	// 서버로부터 복제된 쉴드 값이 변경되었을 때 클라이언트 UI 업데이트
+	OnShieldChanged.Broadcast(Shield / MaxShield);
 }
 
 void UQPStatusComponent::OnRep_Stamina()

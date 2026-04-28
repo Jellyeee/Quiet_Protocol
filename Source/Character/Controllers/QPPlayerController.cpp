@@ -12,11 +12,12 @@
 #include "PJ_Quiet_Protocol/Weapons/WeaponBase.h"
 #include "Components/Border.h"
 #include "Components/Widget.h"
+#include "PJ_Quiet_Protocol/Character/QPCharacter.h"
 
 void AQPPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
-	if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Cyan, TEXT("QPPlayerController BeginPlay"));
+
 	if (!IsLocalController()) return;
 	if (PickupWidgetClass) {
 		PickupWidget = CreateWidget<UQPPickupWidget>(this, PickupWidgetClass);
@@ -63,7 +64,7 @@ void AQPPlayerController::SetPickupTarget(AActor* NewTarget)
 
 void AQPPlayerController::ToggleInventory()
 {
-	if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Yellow, TEXT("ToggleInventory Called"));
+
 
 	SetLootListVisible(false); // 전리품 목록 위젯 숨기기
 	bLootInventoryOpen = false; // 전리품 인벤토리 열림 상태 초기화
@@ -74,18 +75,25 @@ void AQPPlayerController::ToggleInventory()
 
 void AQPPlayerController::ToggleLootInventory()
 {
-	if (bInventoryOpen) // 닫기
+	if (bInventoryOpen) // 이미 열려있다면 닫기
 	{
 		bLootInventoryOpen = false; // 루팅 인벤토리 닫힘 상태 설정
 		SetLootListVisible(false); // 루팅 목록 위젯 숨기기
 		SetInventoryOpen(false); // 인벤토리 닫힘 상태 설정
 		return;
-
 	}
-	if (!HasNearbyLoot(LootScanRadius)) return; // 근처에 전리품이 있는지 확인
-	SetInventoryOpen(true); // 인벤토리 열림 상태 설정
-	bLootInventoryOpen = true; // 루팅 인벤토리 열림 상태 설정
-	SetLootListVisible(true); // 루팅 목록 위젯 표시
+
+	// 주변에 아이템이 있는지 확인
+	bool bHasLoot = HasNearbyLoot(LootScanRadius);
+
+	// 아이템 유무와 상관없이 일단 인벤토리 창은 켬
+	SetInventoryOpen(true); 
+
+	// 주변에 아이템이 있을 때만 루팅 목록과 상태를 활성화
+	bLootInventoryOpen = bHasLoot; 
+	SetLootListVisible(bHasLoot); 
+
+
 }
 
 void AQPPlayerController::SetInventoryOpen(bool bOpen)
@@ -109,18 +117,30 @@ void AQPPlayerController::SetInventoryOpen(bool bOpen)
 	}
 	else if (!InventoryWidget && !InventoryWidgetClass)
 	{
-		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("InventoryWidgetClass is NOT SET in PlayerController Blueprint!"));
+
 	}
 
 	if (!InventoryWidget) 
 	{
-		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("InventoryWidget is NULL - Check your Blueprint settings"));
+
 		return; // 인벤토리 위젯이 유효한지 확인
 	}
 	
-	if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Green, FString::Printf(TEXT("Inventory Open: %s"), bInventoryOpen ? TEXT("TRUE") : TEXT("FALSE")));
+
 
 	if (bInventoryOpen) {
+		// [Respawn Sync] 인벤토리를 열 때 현재 캐릭터의 최신 컴포넌트를 UI에 전달하여 리스폰 시 데이터 불일치 해결
+		if (InventoryWidget)
+		{
+			if (UInventoryRootWidget* RootInv = Cast<UInventoryRootWidget>(InventoryWidget))
+			{
+				if (AQPCharacter* CurrentQPCharacter = Cast<AQPCharacter>(GetPawn()))
+				{
+					RootInv->InitializeInventory(CurrentQPCharacter->GetInventoryComponent());
+				}
+			}
+		}
+
 		InventoryWidget->SetVisibility(ESlateVisibility::Visible);
 		SetShowMouseCursor(true);
 		bEnableClickEvents = true;
@@ -300,4 +320,39 @@ void AQPPlayerController::CloseLootInventoryWidget(bool bRestoreInventoryInputMo
 		SetInputMode(FInputModeGameOnly()); // 게임 전용 입력 모드 설정
 		bShowMouseCursor = false; // 마우스 커서 숨기기
 	}
+}
+
+void AQPPlayerController::ClearAllUI()
+{
+	if (!IsLocalController()) return;
+
+	// 1. 인벤토리 닫기
+	if (bInventoryOpen)
+	{
+		SetInventoryOpen(false);
+	}
+
+	// 2. 픽업 위젯 숨기기
+	if (PickupWidget)
+	{
+		PickupWidget->SetVisibility(ESlateVisibility::Hidden);
+	}
+
+	// 3. 루팅 목록 위젯 숨기기
+	SetLootListVisible(false);
+
+	// 4. 캐릭터 소유 위젯 정리 (스타캐치, 키패드 등)
+	if (AQPCharacter* CurrentQPCharacter = Cast<AQPCharacter>(GetPawn()))
+	{
+		CurrentQPCharacter->HideStarCatchUI();
+		CurrentQPCharacter->HideKeypadUI();
+	}
+
+	// 5. 입력 모드 초기화
+	FInputModeGameOnly InputMode;
+	SetInputMode(InputMode);
+	SetShowMouseCursor(false);
+	FlushPressedKeys();
+	
+
 }

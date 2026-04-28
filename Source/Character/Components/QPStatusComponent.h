@@ -5,6 +5,7 @@
 #include "QPStatusComponent.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnHealthChanged, float, HealthPercent); // 체력 변경 이벤트 델리게이트
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnShieldChanged, float, ShieldPercent); // 쉴드 변경 이벤트 델리게이트
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnDeath); // 사망 이벤트 델리게이트
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnStaminaChanged, float, StaminaPercent); // 스테미나 변경 이벤트 델리게이트
 
@@ -24,6 +25,9 @@ public:
 	void ReceiveDamage(float DamageAmount);
 	void Die();
 
+	UFUNCTION(BlueprintCallable, Category = "Shield")
+	void AddShield(float Amount);
+
 	UFUNCTION(BlueprintPure, Category = "Health")
 	bool IsDead() const { return bIsDead; }
 
@@ -42,11 +46,20 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Health")
 	float GetMaxHealth() const { return MaxHealth; }
 
+	UFUNCTION(BlueprintPure, Category = "Shield")
+	float GetShield() const { return Shield; }
+	
+	UFUNCTION(BlueprintPure, Category = "Shield")
+	float GetMaxShield() const { return MaxShield; }
+
 	UFUNCTION(Server, Reliable)
 	void ServerUpdateStamina(float NewStamina);
 
 	UPROPERTY(BlueprintAssignable, Category = "Health")
 	FOnHealthChanged OnHealthChanged; // 체력 변경 이벤트 델리게이트
+
+	UPROPERTY(BlueprintAssignable, Category = "Shield")
+	FOnShieldChanged OnShieldChanged; // 쉴드 변경 이벤트 델리게이트
 
 	UPROPERTY(BlueprintAssignable, Category = "Stamina")
 	FOnStaminaChanged OnStaminaChanged; // 스테미나 변경 이벤트 델리게이트
@@ -54,9 +67,12 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Health")
 	FOnDeath OnDeath; // 사망 이벤트 델리게이트
 
-	// Health
+	// Health & Shield
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Health")
 	float MaxHealth = 100.f; // 최대 체력
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shield")
+	float MaxShield = 100.f; // 최대 쉴드
 
 	// Stamina
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stamina")
@@ -82,10 +98,16 @@ private:
 	void OnRep_Health();  // 체력 변경이 클라이언트에 반영될 때 호출되는 함수
 	
 	UFUNCTION()
+	void OnRep_Shield();  // 쉴드 변경이 클라이언트에 반영될 때 호출되는 함수
+
+	UFUNCTION()
 	void OnRep_Stamina(); // 스테미나 변경이 클라이언트에 반영될 때 호출되는 함수
 
 	UPROPERTY(ReplicatedUsing = OnRep_Health, VisibleAnywhere, Category = "Health")
 	float Health; // 현재 체력
+
+	UPROPERTY(ReplicatedUsing = OnRep_Shield, VisibleAnywhere, Category = "Shield")
+	float Shield; // 현재 쉴드
 
 	UPROPERTY(Replicated, VisibleAnywhere, Category = "Health")
 	bool bIsDead = false; // 사망 여부

@@ -15,6 +15,7 @@ class PJ_QUIET_PROTOCOL_API UInventoryComponent : public UActorComponent
 
 public:	
 	UInventoryComponent();
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Inventory", meta=(DisplayName="Inventory Width Number", ToolTip="인벤토리 가로 칸 수 입력"))
 	int32 Width = 10; //인벤토리 가로 칸 수
@@ -22,14 +23,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory", meta = (DisplayName = "Inventory Height Number", ToolTip = "인벤토리 세로 칸 수 입력"))
 	int32 Height = 6; //인벤토리 세로 칸 수
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory", meta = (DisplayName = "Inventory Slots", ToolTip = "현재 들어간 아이템들"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory", ReplicatedUsing = OnRep_Slots, meta = (DisplayName = "Inventory Slots", ToolTip = "현재 들어간 아이템들"))
 	TArray<FInventorySlot> Slots; //현재 들어간 아이템들
+
+	UFUNCTION()
+	void OnRep_Slots();
 
 	UPROPERTY(BlueprintAssignable, Category = "Inventory") //인벤토리 변경 델리게이트
 	FOnInventoryChanged OnInventoryChanged; //인벤토리 변경 델리게이트
 
 	UFUNCTION(BlueprintCallable, Category = "Inventory") //아이템 추가 함수
-	bool AddItem(UItemDataAsset* ItemData, int32 Quantity); //아이템 추가 함수
+	bool AddItem(UItemDataAsset* ItemData, int32 Quantity, int32 SlotIdx = -1, int32 CodeNum = -1); //아이템 추가 함수
 
 	UFUNCTION(BlueprintCallable, Category = "Inventory") //아이템 제거 함수
 	bool RemoveItemAt(const FIntPoint& Position); //특정 위치의 아이템 제거 함수
@@ -46,7 +50,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory") //인벤토리 초기화 함수
 	bool FindSlotContaining(const FIntPoint& Cell, FInventorySlot& Outslot) const; //특정 셀을 포함하는 슬롯 찾기 함수
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
-	bool AddItemAt(UItemDataAsset* ItemData, int32 Quantity, const FIntPoint& Position); //특정 위치에 아이템 추가 함수
+	bool AddItemAt(UItemDataAsset* ItemData, int32 Quantity, const FIntPoint& Position, int32 SlotIdx = -1, int32 CodeNum = -1); //특정 위치에 아이템 추가 함수
 
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Ammo")
 	int32 ConsumeAmmo(EQPWeaponType WeaponType, int32 AmountToConsume);

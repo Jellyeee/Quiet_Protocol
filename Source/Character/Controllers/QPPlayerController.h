@@ -23,6 +23,9 @@ public:
 	void ToggleInventory(); // 인벤토리 토글 함수
 	void ToggleLootInventory(); // 전리품 인벤토리 토글 함수
 
+	/** 모든 게임플레이 UI를 강제로 닫고 입력 모드를 초기화합니다. (사망 시 호출) */
+	void ClearAllUI();
+
 protected:
 	//Pickup Widget Class
 	UPROPERTY(EditDefaultsOnly, Category = "UI|Pickup")

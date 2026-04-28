@@ -13,10 +13,18 @@ class PJ_QUIET_PROTOCOL_API AWorldItemActor : public AActor
 public:	
 	AWorldItemActor();
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item", Replicated)
 	UItemDataAsset* ItemData; //아이템 정보
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item", Replicated)
 	int32 Quantity; //아이템 수량
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Password", Replicated)
+	int32 AssignedSlotIndex = -1; // -1이면 일반 아이템, 1~4면 키카드 슬롯 번호
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Password", Replicated)
+	int32 AssignedCodeNumber = -1; // 해당 슬롯의 비밀번호 숫자
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Item|Pickup")
 	TObjectPtr<class USceneComponent> Root; //루트 씬 컴포넌트

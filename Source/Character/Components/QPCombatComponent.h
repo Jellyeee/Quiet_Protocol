@@ -86,6 +86,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Combat|Aim")
 	FORCEINLINE bool IsAiming() const { return bIsAiming; }
 
+	UFUNCTION(BlueprintPure, Category = "Combat|Aim")
+	FORCEINLINE float GetCrosshairSpread() const { return CrosshairSpread; }
+
+	UFUNCTION(BlueprintPure, Category = "Combat|Aim")
+	FORCEINLINE float GetCrosshairSpreadMax() const { return CrosshairSpreadMax; }
+
 	UFUNCTION(BlueprintPure, Category = "Combat|Wait")
 	FVector GetMuzzleHitTarget() const; // 실제 총구가 가리키는 위치 반환
 	
@@ -118,6 +124,15 @@ protected:
 
 	UFUNCTION(NetMulticast, Unreliable)
 	void MulticastReload(); // 재장전 애니메이션/이펙트 동기화용 함수 (모든 클라이언트에서 재장전 효과 재생)
+
+	UFUNCTION(Server, Reliable)
+	void ServerFinishReload(int32 AddedAmmo); // 탄약 소모 후 서버에 장전 완료 알림
+
+	UFUNCTION(Server, Reliable)
+	void ServerInsertShotgunShell(int32 AddedAmmo); // 샷건 1발 장전 완료 알림
+
+	UFUNCTION(Server, Reliable)
+	void ServerCancelReload(); // 재장전 취소 서버 통보 (클라이언트 -> 서버)
 
 	UFUNCTION(NetMulticast, Reliable)
 	void MulticastCancelReload(); // 재장전 취소 동기화용 함수 (몽타주 중지 등)
@@ -204,6 +219,29 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Aim|Crosshair", meta = (AllowPrivateAccess = "true"))
 	float CrouchCrosshairOffset = 30.f; // 앉아 있을 때 크로스헤어 수직 오프셋 (양수: 아래로, 음수: 위로)
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Aim|Crosshair", Replicated, meta = (AllowPrivateAccess = "true"))
+	float CrosshairSpread = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Aim|Crosshair", meta = (AllowPrivateAccess = "true"))
+	float CrosshairSpreadMax = 16.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Aim|Crosshair", meta = (AllowPrivateAccess = "true"))
+	float CrosshairVelocityFactor = 2.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Aim|Crosshair", meta = (AllowPrivateAccess = "true"))
+	float CrosshairInAirFactor = 2.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Aim|Crosshair", meta = (AllowPrivateAccess = "true"))
+	float CrosshairShootingFactor = 2.f;
+
 	void UpdateCrosshairPosition(float DeltaTime); // 크로스헤어 위치 업데이트 함수
+	void UpdateCrosshairSpread(float DeltaTime); // 크로스헤어 확산 업데이트 함수
+
+	// 부드러운 반동(Smooth Recoil)을 위한 변수들
+	float TargetRecoilPitch = 0.f;
+	float TargetRecoilYaw = 0.f;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Recoil", meta = (AllowPrivateAccess = "true"))
+	float RecoilInterpSpeed = 15.f; // 반동 보간 속도
 
 };

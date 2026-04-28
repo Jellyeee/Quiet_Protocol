@@ -26,6 +26,22 @@ void AQPCrosshair::DrawHUD()
 	ViewportCenter += CrosshairScreenOffset; // 화면 중앙에서의 오프셋 적용
 	FVector2D Spread(0.f, 0.f); // 확산 값 초기화
 
+	// 큰 메시지 출력 (탈출 성공/함정 발동 등) - Pawn 유무와 관계없이 실행되도록 상단 배치
+	if (MessageTimer > 0.f)
+	{
+		MessageTimer -= GetWorld()->GetDeltaSeconds();
+
+		float TextX = ViewportCenter.X;
+		float TextY = ViewportCenter.Y - 200.f; // 중앙보다 약간 위
+
+		if (GEngine && GEngine->GetLargeFont())
+		{
+			float FontScale = 3.5f;
+			// 텍스트 중앙 정렬을 위한 오프셋 (텍스트 길이에 따라 유동적)
+			DrawText(CurrentMessage, CurrentMessageColor, TextX - (CurrentMessage.Len() * 20.f), TextY, GEngine->GetLargeFont(), FontScale, false);
+		}
+	}
+
 	APawn* Pawn = GetOwningPawn();
 	if (Pawn)
 	{
@@ -35,32 +51,11 @@ void AQPCrosshair::DrawHUD()
 			return; // 사망 시 크로스헤어 비활성화
 		}
 
-		FVector Velocity = Pawn->GetVelocity(); 
-		Velocity.Z = 0.f; // 수직 속도는 확산 계산에서 제외 (수평 이동만 고려)
-		float Speed = Velocity.Size(); // 이동 속도 계산
-
-		float VelocitySpread = FMath::GetMappedRangeValueClamped(FVector2D(0.f, 600.f), FVector2D(0.f, CrosshairSpreadMax), Speed); // 이동 속도에 따른 확산 계산
-		
-		float InAirSpread = 0.f; // 공중 상태일 때 확산 계산
-		if (Pawn->GetMovementComponent() && Pawn->GetMovementComponent()->IsFalling()) // 캐릭터가 공중에 있는지 확인
+		// [Change] 자체 계산 대신 CombatComponent에서 이미 계산된 확산 값을 가져와 동기화함
+		if (UQPCombatComponent* Combat = Character->FindComponentByClass<UQPCombatComponent>())
 		{
-			InAirSpread = CrosshairSpreadMax * 2.f;  
+			CrosshairSpread = Combat->GetCrosshairSpread();
 		}
-
-		float AimingSpread = 0.f; // 조준 시 확산 감소 계산
-		if (Character) 
-		{
-			if (Character->IsAiming())
-			{
-				VelocitySpread *= 0.1f; 
-				InAirSpread *= 0.1f;    
-			}
-		}
-
-		float TargetSpread = CrosshairSpreadBase + VelocitySpread + InAirSpread; 
-
-		float DeltaTime = GetWorld()->GetDeltaSeconds(); 
-		CrosshairSpread = FMath::FInterpTo(CrosshairSpread, TargetSpread, DeltaTime, 10.f);
 	}
 
 	Spread.X = CrosshairSpread;
@@ -106,19 +101,30 @@ void AQPCrosshair::DrawHUD()
 			if (Status)
 			{
 				float HealthPercent = FMath::Clamp(Status->GetHealth() / FMath::Max(1.f, Status->GetMaxHealth()), 0.f, 1.f);
+				float ShieldPercent = FMath::Clamp(Status->GetShield() / FMath::Max(1.f, Status->GetMaxShield()), 0.f, 1.f);
 				float StaminaPercent = FMath::Clamp(Status->GetCurrentStamina() / FMath::Max(1.f, Status->GetMaxStamina()), 0.f, 1.f);
 
 				float BarWidth = 300.f;
 				float BarHeight = 15.f;
-				float StartX = ViewportCenter.X - (BarWidth / 2.f);
+				float StartX = ViewportSize.X / 2.f - (BarWidth / 2.f);
 				float StartY = ViewportSize.Y - 120.f; // 중앙 하단
 
 				// 체력 게이지 (회색) 배경 및 전경
 				DrawRect(FLinearColor(0.1f, 0.1f, 0.1f, 0.6f), StartX, StartY, BarWidth, BarHeight);
 				DrawRect(FLinearColor(0.5f, 0.5f, 0.5f, 1.f), StartX, StartY, BarWidth * HealthPercent, BarHeight);
 
+				// 보호막 게이지 (파란색) - 체력바 바로 아래 가느다랗게 추가
+				if (Status->GetShield() > 0.f)
+				{
+					float ShieldBarHeight = BarHeight * 0.4f; // 얇은 높이
+					float ShieldStartY = StartY + BarHeight + 2.f; // 체력바 바로 아래
+					DrawRect(FLinearColor(0.05f, 0.1f, 0.2f, 0.6f), StartX, ShieldStartY, BarWidth, ShieldBarHeight);
+					DrawRect(FLinearColor(0.0f, 0.6f, 1.0f, 1.f), StartX, ShieldStartY, BarWidth * ShieldPercent, ShieldBarHeight);
+				}
+
 				// 스태미나 게이지 (회색 + 약간의 하늘색) 배경 및 전경
-				float StaminaY = StartY + BarHeight + 10.f;
+				// 보호막이 생길 수 있으므로 간격을 조금 더 둠
+				float StaminaY = StartY + BarHeight + 18.f;
 				DrawRect(FLinearColor(0.1f, 0.15f, 0.2f, 0.6f), StartX, StaminaY, BarWidth, BarHeight);
 				DrawRect(FLinearColor(0.4f, 0.6f, 0.7f, 1.f), StartX, StaminaY, BarWidth * StaminaPercent, BarHeight); 
 			}
@@ -149,6 +155,27 @@ void AQPCrosshair::DrawHUD()
 			}
 		}
 	}
+}
+
+void AQPCrosshair::ShowBigMessage(const FString& Message, float Duration)
+{
+	CurrentMessage = Message;
+	MessageTimer = Duration;
+
+	// 기본 색상을 하얀색으로 설정
+	CurrentMessageColor = FLinearColor::White;
+
+	// 메시지 내용에 따라 색상 지정 (한글 인코딩 문제를 고려해 최대한 단순하게 매칭)
+	if (Message.Contains(TEXT("성공")) || Message.Contains(TEXT("Success")))
+	{
+		CurrentMessageColor = FLinearColor::Green; 
+	}
+	else if (Message.Contains(TEXT("함정")) || Message.Contains(TEXT("발동")) || Message.Contains(TEXT("Trap")))
+	{
+		CurrentMessageColor = FLinearColor::Red;
+	}
+
+
 }
 
 
