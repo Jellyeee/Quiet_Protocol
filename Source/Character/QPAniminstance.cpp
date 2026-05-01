@@ -247,16 +247,32 @@ void UQPAniminstance::NativeUpdateAnimation(float DeltaSeconds)
 						LeftHandIKTransform = TargetTransform;
 						bUseLeftHandIK = true;
 					}
+
+					}
+				}
+				else
+				{
+					// 무기 메쉬가 없을 경우 회전 보정값 초기화
+					const FQuat CurrentCorrection = FQuat(HandRotationCorrection);
+					const FQuat TargetCorrection = FQuat::Identity;
+					HandRotationCorrection = FQuat::Slerp(CurrentCorrection, TargetCorrection, DeltaSeconds * 5.f).Rotator();
 				}
 			}
-			else
-			{
-				// 무기 메쉬가 없을 경우 회전 보정값 초기화
-				const FQuat CurrentCorrection = FQuat(HandRotationCorrection);
-				const FQuat TargetCorrection = FQuat::Identity;
-				HandRotationCorrection = FQuat::Slerp(CurrentCorrection, TargetCorrection, DeltaSeconds * 5.f).Rotator();
-			}
 		}
+
+	// [6-5] 왼손 IK 가중치 계산 (무기가 없거나 장전/질주 중이면 해제)
+	FName CurveName = TEXT("LeftHandIK");
+	TArray<FName> ActiveCurveNames;
+	GetActiveCurveNames(EAnimCurveType::AttributeCurve, ActiveCurveNames);
+
+	if (ActiveCurveNames.Contains(CurveName))
+	{
+		LeftHandIKAlpha = GetCurveValue(CurveName);
+	}
+	else
+	{
+		float TargetAlpha = (WeaponType == EQPWeaponType::EWT_None || bIsReloading || bIsSprinting) ? 0.f : 1.f;
+		LeftHandIKAlpha = FMath::FInterpTo(LeftHandIKAlpha, TargetAlpha, DeltaSeconds, 15.f);
 	}
 
 	// [7] 무기 타입에 따른 상체(Spine) 및 오프셋 미세 조정

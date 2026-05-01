@@ -1,12 +1,26 @@
 #include "InventoryComponent.h"
 #include "ItemDataAsset.h"
+#include "Net/UnrealNetwork.h"
 
 UInventoryComponent::UInventoryComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
+	SetIsReplicatedByDefault(true);
 }
 
-bool UInventoryComponent::AddItem(UItemDataAsset* ItemData, int32 Quantity)
+void UInventoryComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(UInventoryComponent, Slots);
+}
+
+void UInventoryComponent::OnRep_Slots()
+{
+	OnInventoryChanged.Broadcast(); // 클라이언트에서 수신 시 UI 갱신
+}
+
+bool UInventoryComponent::AddItem(UItemDataAsset* ItemData, int32 Quantity, int32 SlotIdx, int32 CodeNum)
 {
 	if (!ItemData) return false;
 	if (Quantity <= 0) return false;
@@ -18,16 +32,16 @@ bool UInventoryComponent::AddItem(UItemDataAsset* ItemData, int32 Quantity)
 		{
 			const FIntPoint Position(x, y);
 			// 해당 위치에 아이템 추가 시도
-			if(AddItemAt(ItemData, Quantity, Position))
+			if(AddItemAt(ItemData, Quantity, Position, SlotIdx, CodeNum))
 			{
-				UE_LOG(LogTemp, Warning, TEXT("[INV] AddItem OK: Slots=%d"), Slots.Num());
+
 				return true;
 			}
 		}
 	}
 	return false;
 }
-bool UInventoryComponent::AddItemAt(UItemDataAsset* ItemData, int32 Quantity, const FIntPoint& Position)
+bool UInventoryComponent::AddItemAt(UItemDataAsset* ItemData, int32 Quantity, const FIntPoint& Position, int32 SlotIdx, int32 CodeNum)
 {
 	if (!ItemData) return false;
 	if (Quantity <= 0) return false;
@@ -39,6 +53,8 @@ bool UInventoryComponent::AddItemAt(UItemDataAsset* ItemData, int32 Quantity, co
 	NewSlot.Position = Position;
 	NewSlot.Item.ItemData = ItemData;
 	NewSlot.Item.Quantity = Quantity;
+	NewSlot.Item.AssignedSlotIndex = SlotIdx;
+	NewSlot.Item.AssignedCodeNumber = CodeNum;
 	
 	Slots.Add(NewSlot); // 인벤토리 배열에 추가
 	OnInventoryChanged.Broadcast(); // 변경 사항 알림

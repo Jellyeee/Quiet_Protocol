@@ -33,4 +33,7 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Ammo", meta = (DisplayName = "Target Weapon Type", ToolTip = "탄약일 경우 어떤 무기에 쓰이는지 설정"))
 	EQPWeaponType TargetWeaponType = EQPWeaponType::EWT_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Stats", meta = (DisplayName = "Shield Amount", ToolTip = "방어복 아이템일 경우 추가될 보호막 양"))
+	float ShieldAmount = 50.f;
 };

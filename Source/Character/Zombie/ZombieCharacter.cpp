@@ -153,6 +153,17 @@ void AZombieCharacter::ExitAttackRootMotionMode()
 
 void AZombieCharacter::Die()
 {
+	if (HasAuthority())
+	{
+		// 사망 애니메이션이 끝난 후 자연스럽게 시체가 사라지도록 수명(LifeSpan) 설정
+		float DelTime = 3.0f;
+		if (DeathMontage)
+		{
+			DelTime = DeathMontage->GetPlayLength() + 2.0f;
+		}
+		SetLifeSpan(DelTime);
+	}
+
 	MulticastDie();
 }
 

@@ -43,6 +43,12 @@ void AGunWeapon::BeginPlay()
 		MagCapacity = 4;
 		// 샷건은 강력한 화력을 고려해 발사 간격을 0.8초로 길게 설정
 		if (FMath::IsNearlyEqual(FireRate, 0.15f)) FireRate = 0.8f; 
+		
+		// 샷건 반동 키우기
+		RecoilPitchMin = FMath::Max(RecoilPitchMin, 2.5f);
+		RecoilPitchMax = FMath::Max(RecoilPitchMax, 4.0f);
+		RecoilYawMin = FMath::Min(RecoilYawMin, -1.0f);
+		RecoilYawMax = FMath::Max(RecoilYawMax, 1.0f);
 	}
 
 	CurrentAmmo = MagCapacity;
@@ -135,12 +141,13 @@ void AGunWeapon::FireSinglePellet()
 		CurrentSpreadAngle = ShotgunSpreadAngle; 
 	}
 
-	/** QPCombatComponent에서 계산된 크로스헤어 타겟(HitTarget)을 가져옵니다. */
+	/** QPCombatComponent에서 계산된 크로스헤어 타겟(HitTarget)과 현재 확산(Spread) 값을 가져옵니다. */
 	UQPCombatComponent* CombatComponent = OwnerCharacter->FindComponentByClass<UQPCombatComponent>();
 	if (!CombatComponent) return;
 
 	/** 화면 중앙(크로스헤어)이 가리키는 월드 좌표 */
 	const FVector TraceEnd = CombatComponent->HitTarget;
+	const float CombatSpread = CombatComponent->GetCrosshairSpread(); // [Add] 현재 동적 확산 값 가져오기
 
 	// 2. 총구 위치(Muzzle) 계산
 	FVector MuzzleLocation = GetActorLocation(); 
@@ -153,10 +160,21 @@ void AGunWeapon::FireSinglePellet()
 	const FVector BaseBulletDir = (TraceEnd - MuzzleLocation).GetSafeNormal();
 	FVector FinalBulletDir = BaseBulletDir;
 
-	/** 샷건일 경우 설정된 각도 내에서 랜덤하게 방향을 틀어 탄 퍼짐 구현 */
-	if (CurrentSpreadAngle > 0.f)
+	/** 
+	 * [Change] 크로스헤어 확산 상태를 실제 탄 퍼짐 각도로 변환하여 적용 
+	 * 크로스헤어가 벌어진 정도(CombatSpread)에 비례하여 발사 각도를 랜덤하게 편향시킵니다.
+	 */
+	float TotalSpreadAngle = CurrentSpreadAngle;
+	if (CombatSpread > 0.f)
 	{
-		float HalfAngleRad = FMath::DegreesToRadians(CurrentSpreadAngle);
+		// 픽셀 단위 확산값을 각도(Degrees)로 맵핑 (최대 확산 시 약 5~8도 정도 퍼지도록 설정)
+		float DynamicSpreadAngle = (CombatSpread / CombatComponent->GetCrosshairSpreadMax()) * 6.0f;
+		TotalSpreadAngle += DynamicSpreadAngle;
+	}
+
+	if (TotalSpreadAngle > 0.f)
+	{
+		float HalfAngleRad = FMath::DegreesToRadians(TotalSpreadAngle);
 		FinalBulletDir = FMath::VRandCone(BaseBulletDir, HalfAngleRad);
 	}
 

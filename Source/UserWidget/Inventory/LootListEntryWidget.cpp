@@ -6,6 +6,7 @@
 #include "PJ_Quiet_Protocol/Inventory/ItemDataAsset.h"
 #include "InventoryDragOperation.h"
 #include "ItemDragVisualWidget.h"
+#include "PJ_Quiet_Protocol/Character/QPCharacter.h"
 void ULootListEntryWidget::Setup(AActor* InSourceActor, UItemDataAsset* InItemData, int32 InQuantity)
 {
 	SourceActor = InSourceActor; // 출처 액터 설정
@@ -33,6 +34,17 @@ FReply ULootListEntryWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
 {
 	if (InMouseEvent.IsMouseButtonDown(EKeys::LeftMouseButton)) // 왼쪽 마우스 버튼이 눌렸는지 확인
 	{
+		if (InMouseEvent.IsShiftDown()) // 쉬프트 키가 같이 눌렸는지 확인 (빠른 줍기)
+		{
+			if (SourceActor.IsValid())
+			{
+				if (AQPCharacter* PlayerChar = Cast<AQPCharacter>(GetOwningPlayerPawn()))
+				{
+					PlayerChar->QuickLootItem(SourceActor.Get());
+					return FReply::Handled();
+				}
+			}
+		}
 		return UWidgetBlueprintLibrary::DetectDragIfPressed(InMouseEvent, this, EKeys::LeftMouseButton).NativeReply; // 드래그 감지 시작
 	}
 	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent); // 기본 동작 호출

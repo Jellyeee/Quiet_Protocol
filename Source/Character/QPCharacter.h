@@ -77,6 +77,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Context")
 	void DropInventoryItemAt(const FIntPoint& Cell); //인벤토리 아이템 버리기 함수
 
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Loot")
+	void QuickLootItem(AActor* TargetActor); //빠른 파밍(Shift+클릭) 함수
+
 	FORCEINLINE float GetAO_Yaw() const { return AO_Yaw;  } // 현재 애니메이션 오프셋의 Yaw 값을 반환
 	FORCEINLINE float GetAO_Pitch() const { return AO_Pitch;  } // 현재 애니메이션 오프셋의 Pitch 값을 반환
 	FORCEINLINE bool IsTurningInPlace() const { return bIsTurningInPlace; } // 제자리 회전 중인지 반환
@@ -102,6 +105,20 @@ public:
 
 	/** 사망 로직 실행 (래그돌 전환, 카메라 상태 변경 등) */
 	void Die(); 
+
+	// 스타캐치 및 키패드 UI 제어
+	UFUNCTION(Client, Reliable)
+	void ShowStarCatchUI(float StartRatio, float WidthRatio, float Duration);
+
+	UFUNCTION(Client, Reliable)
+	void HideStarCatchUI();
+	void ShowKeypadUI(class AQPEscapeDoor* Door);
+	void HideKeypadUI();
+
+	UFUNCTION(BlueprintPure, Category = "Escape")
+	const TArray<int32>& GetCollectedPassword() const { return CollectedPassword; }
+
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 protected:
 	virtual void BeginPlay() override;
@@ -141,6 +158,27 @@ protected:
 	UFUNCTION()
 	void HandleAimStateChanged(bool bIsAiming); 
 
+	/** 현재 수리 중인 발전기 추적용 (스킬체크 입력 연동) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Interaction")
+	class AQPEscapeGenerator* CurrentRepairingGenerator; 
+
+	// ======================================
+	// 스타캐치(스킬체크) UI 레이어 관리
+	// ======================================
+	UPROPERTY(EditDefaultsOnly, Category = "UI")
+	TSubclassOf<class UQPGeneratorWidget> StarCatchWidgetClass;
+
+	UPROPERTY()
+	class UQPGeneratorWidget* StarCatchWidgetInstance;
+
+	// 탈출 키패드 UI
+	UPROPERTY(EditDefaultsOnly, Category = "UI")
+	TSubclassOf<class UQPKeypadWidget> KeypadWidgetClass;
+
+	UPROPERTY()
+	class UQPKeypadWidget* KeypadWidgetInstance;
+
+
 	//움직임 속도 변수들
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
 	float WalkSpeed = 600.f; //걷기 속도
@@ -162,6 +200,10 @@ protected:
 	float CrouchCameraInterpSpeed = 12.f; 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera", meta = (ClampMin = "0.0"))
 	float CameraArmLength = 300.f; 
+
+	// 수집한 4자리 비밀번호 (초기값 -1)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Escape", ReplicatedUsing = OnRep_CollectedPassword)
+	TArray<int32> CollectedPassword;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
 	float AimingArmLength = 200.f; 
 	float DefaultArmLength;
@@ -173,7 +215,7 @@ protected:
 	TSubclassOf<class UCameraShakeBase> SprintCameraShakeClass; // 달리기 카메라 흔들림 클래스
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Sprint")
-	float SprintFOV = 105.f;  // 달리기 시 FOV 값 (기본값보다 넓게 설정하여 속도감 증가 효과)
+	float SprintFOV = 75.f;  // 달리기 시 FOV 값 (화면을 확대하여 속도감/집중도 부여)
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Sprint")
 	float DefaultFOV = 90.f;  // 기본 FOV 값 (달리기 시작 시와 멈출 때 원래대로 돌아가기 위한 값)
@@ -221,11 +263,23 @@ protected:
 	void AimButtonPressed(); //조준 버튼 눌림
 	void AimButtonReleased(); //조준 버튼 떼짐
 	void ReloadButtonPressed(); //재장전 버튼 눌림
+
+	void InteractPressed(); //상호작용 버튼(F) 눌림
+	void InteractReleased(); //상호작용 버튼(F) 떼짐
+
+	void EquipSlot1(); //단축키 1 (라이플)
+	void EquipSlot2(); //단축키 2 (샷건)
+	void EquipSlot3(); //단축키 3 (권총)
+	void EquipSlot4(); //단축키 4 (근접무기)
+	void EquipSlot5(); //단축키 5 (수납/빈손)
+	void EquipWeaponByType(EQPWeaponType TargetType); //인벤토리에서 타입 찾아 퀵 장착
+	
 	void AimOffset(float DeltaTime); //에임오프셋 계산
 private:
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	UAnimMontage* ReloadMontage; // 재장전 몽타주
 
+public:
 	// =============================================================================
 	// [Network] 서버 통신 함수 (RPC)
 	// =============================================================================
@@ -242,9 +296,9 @@ private:
 	UFUNCTION(Server, Reliable)
 	void ServerEquipOverlappingWeapon(class AWeaponBase* Weapon);
 
-	/** 월드에 존재하던 아이템 액터를 서버에서 제거 (인벤토리 획득 시) */
+	/** 월드에 존재하던 아이템 액터를 서버에서 제거 및 비밀번호 정보 수집 처리 */
 	UFUNCTION(Server, Reliable)
-	void ServerDestroyPickupActor(class AActor* PickupActor);
+	void ServerDestroyPickupActor(class AActor* PickupActor, int32 SlotIdx = -1, int32 CodeNum = -1);
 
 	/** 특정 클래스의 무기를 서버에서 스폰하고 장착 */
 	UFUNCTION(Server, Reliable)
@@ -252,19 +306,37 @@ private:
 
 	/** 버려진 아이템을 월드 좌표에 서버에서 생성 */
 	UFUNCTION(Server, Reliable)
-	void ServerSpawnWorldItem(class UItemDataAsset* ItemData, int32 Quantity, FVector Location);
+	void ServerUpdateShield(float Amount, FIntPoint ItemPos = FIntPoint(-1, -1));
+
+	UFUNCTION(Server, Reliable)
+	void ServerSpawnWorldItem(class UItemDataAsset* ItemData, int32 Quantity, FVector Location, int32 SlotIdx = -1, int32 CodeNum = -1);
 
 	/** 장착 중인 무기를 버리는 로직을 서버에서 실행 */
 	UFUNCTION(Server, Reliable)
 	void ServerTryDropEquipped();
 
-	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	/** 인벤토리와 무기를 안전하게 교체하기 위한 서버 요청 */
+	UFUNCTION(Server, Reliable)
+	void ServerSwapWeapon(TSubclassOf<class AWeaponBase> NewWeaponClass, bool bDropCurrent, FIntPoint TargetCell = FIntPoint(-1, -1));
+
+	void ServerSwapWeapon_Implementation(TSubclassOf<class AWeaponBase> NewWeaponClass, bool bDropCurrent, FIntPoint TargetCell = FIntPoint(-1, -1));
+
+	/** 클라이언트 상호작용 권한 문제 해결을 위한 서버 요청 */
+	UFUNCTION(Server, Reliable)
+	void ServerInteract(AActor* Target);
+
+	UFUNCTION(Server, Reliable)
+	void ServerStopInteract(AActor* Target);
+
+
 
 private:
 	void UpdateCameraDynamics(float DeltaTime);
 	void UpdateDeathCamera(float DeltaTime);
 	void UpdateRotationMode();
 	
+	bool bAlreadyDead = false;
+
 	// 소음(발소리) 발생 관련 로직
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
 	class UPawnNoiseEmitterComponent* NoiseEmitterComponent;
@@ -335,6 +407,9 @@ public:
 
 	UFUNCTION(NetMulticast, Reliable)
 	void MulticastDie(); // 사망 처리 전송 함수
+
+	UFUNCTION()
+	void OnRep_CollectedPassword();
 
 protected:
 };

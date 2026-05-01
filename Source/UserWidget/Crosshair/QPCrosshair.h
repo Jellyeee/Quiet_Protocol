@@ -60,7 +60,13 @@ public:
 	float CrosshairShootingFactor = 2.f; // 사격 시 확산 증가 계수 
 
 
+	UFUNCTION(BlueprintCallable, Category = "UI")
+	void ShowBigMessage(const FString& Message, float Duration = 3.f);
+
 private:
 	void DrawCrosshairPart(UTexture2D* Texture, FVector2D ViewportCenter, FVector2D Spread); // 각 크로스헤어 부분을 그리는 함수
 	
+	FString CurrentMessage;
+	float MessageTimer = 0.f;
+	FLinearColor CurrentMessageColor = FLinearColor::White;
 };

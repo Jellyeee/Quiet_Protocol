@@ -3,25 +3,41 @@
 #include "PJ_Quiet_Protocol/Character/QPCharacter.h"
 #include "PJ_Quiet_Protocol/Inventory/InventoryComponent.h"
 #include "InventoryDragOperation.h" 
+#include "Components/TextBlock.h"
+#include "PJ_Quiet_Protocol/GameMode/QPEscapeGameState.h"
 
 void UInventoryRootWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 
-	/** 소유 플레이어의 캐릭터로부터 인벤토리 컴포넌트를 가져와 캐싱합니다. */
+	/** 초기 생성 시 소유 캐릭터의 인벤토리를 찾아 초기화합니다. */
 	AQPCharacter* Character = Cast<AQPCharacter>(GetOwningPlayerPawn());
-	if (!Character || !InventoryGrid) return;
+	if (Character && Character->GetInventoryComponent())
+	{
+		InitializeInventory(Character->GetInventoryComponent());
+	}
+}
 
-	CachedInventory = Character->GetInventoryComponent();
-	if (!CachedInventory) return;
+void UInventoryRootWidget::InitializeInventory(UInventoryComponent* NewInventory)
+{
+	if (!NewInventory || !InventoryGrid) return;
 
-	/** 인벤토리 데이터 변경 시 UI를 자동으로 갱신하기 위해 델리게이트를 바인딩합니다. (중복 방지를 위해 기존 바인딩 제거 후 수행) */
-	CachedInventory->OnInventoryChanged.RemoveDynamic(this, &UInventoryRootWidget::HandleInventoryChanged);
-	CachedInventory->OnInventoryChanged.AddDynamic(this, &UInventoryRootWidget::HandleInventoryChanged);
+	/** 기존 인벤토리와의 바인딩이 있다면 해제합니다. */
+	if (CachedInventory)
+	{
+		CachedInventory->OnInventoryChanged.RemoveDynamic(this, &UInventoryRootWidget::HandleInventoryChanged);
+	}
 
-	/** 그리드 위젯에 인벤토리 데이터를 전달하고 초기 동기화를 수행합니다. */
+	/** 새로운 인벤토리를 캐싱하고 델리게이트를 바인딩합니다. */
+	CachedInventory = NewInventory;
+	CachedInventory->OnInventoryChanged.AddUniqueDynamic(this, &UInventoryRootWidget::HandleInventoryChanged);
+
+	/** 그리드 위젯에도 새로운 인벤토리를 전달하고 갱신합니다. */
 	InventoryGrid->SetInventory(CachedInventory);
 	InventoryGrid->RefreshGrid();
+
+	/** 상단 비밀번호 정보를 갱신합니다. */
+	UpdatePasswordDisplay();
 }
 
 void UInventoryRootWidget::NativeDestruct()
@@ -72,4 +88,49 @@ bool UInventoryRootWidget::NativeOnDrop(const FGeometry& InGeometry, const FDrag
 void UInventoryRootWidget::HandleInventoryChanged()
 {
 	if (InventoryGrid) InventoryGrid->RefreshGrid();
+	UpdatePasswordDisplay();
+}
+
+void UInventoryRootWidget::UpdatePasswordDisplay()
+{
+	if (!PasswordText) return;
+
+	AQPCharacter* Character = Cast<AQPCharacter>(GetOwningPlayerPawn());
+	if (!Character) return;
+
+	TArray<int32> Collected = Character->GetCollectedPassword();
+
+	// 배열이 비어있다면 GameState에서 받아와서 임시 채움
+	if (Collected.Num() == 0)
+	{
+		if (AQPEscapeGameState* GS = GetWorld()->GetGameState<AQPEscapeGameState>())
+		{
+			if (GS->TotalGenerators > 0)
+			{
+				Collected.Init(-1, GS->TotalGenerators);
+			}
+		}
+	}
+
+	FString DisplayString;
+
+	// 인벤토리 상단에 표시될 문자열 생성 (예: "_ _ 3 _")
+	for (int32 i = 0; i < Collected.Num(); ++i)
+	{
+		if (Collected[i] == -1)
+		{
+			DisplayString += TEXT("_");
+		}
+		else
+		{
+			DisplayString += FString::FromInt(Collected[i]);
+		}
+
+		if (i < Collected.Num() - 1)
+		{
+			DisplayString += TEXT(" ");
+		}
+	}
+
+	PasswordText->SetText(FText::FromString(DisplayString));
 }

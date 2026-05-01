@@ -70,7 +70,10 @@ protected:
 	FTransform LeftHandIKTransform; // 왼손 IK 트랜스폼
 
 	UPROPERTY(BlueprintReadOnly, Category = "IK")
-	bool bUseLeftHandIK = false; // 왼손 IK 사용 여부
+	bool bUseLeftHandIK = false; // 왼손 IK 사용 여부 (구버전 호환)
+
+	UPROPERTY(BlueprintReadOnly, Category = "IK")
+	float LeftHandIKAlpha = 1.0f; // 왼손 IK의 부드러운 가중치 (애니메이션 커브와 연동)
 
 	UPROPERTY(BlueprintReadOnly, Category = "Turn")
 	float RootYawOffset = 0.f; // 루트 Yaw 오프셋
