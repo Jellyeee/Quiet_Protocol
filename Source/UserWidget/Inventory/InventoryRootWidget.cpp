@@ -3,63 +3,134 @@
 #include "PJ_Quiet_Protocol/Character/QPCharacter.h"
 #include "PJ_Quiet_Protocol/Inventory/InventoryComponent.h"
 #include "InventoryDragOperation.h" 
+#include "Components/TextBlock.h"
+#include "PJ_Quiet_Protocol/GameMode/QPEscapeGameState.h"
 
 void UInventoryRootWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 
-	AQPCharacter* Character = Cast<AQPCharacter>(GetOwningPlayerPawn()); // 소유한 플레이어 폰을 AQPCharacter로 캐스팅
-	if (!Character || !InventoryGrid) return; // 캐스팅 실패 또는 인벤토리 그리드가 유효하지 않으면 종료
+	/** 초기 생성 시 소유 캐릭터의 인벤토리를 찾아 초기화합니다. */
+	AQPCharacter* Character = Cast<AQPCharacter>(GetOwningPlayerPawn());
+	if (Character && Character->GetInventoryComponent())
+	{
+		InitializeInventory(Character->GetInventoryComponent());
+	}
+}
 
-	CachedInventory = Character->GetInventoryComponent(); // 캐릭터의 인벤토리 컴포넌트 가져오기
-	if (!CachedInventory) return; // 인벤토리 컴포넌트가 유효하지 않으면 종료
+void UInventoryRootWidget::InitializeInventory(UInventoryComponent* NewInventory)
+{
+	if (!NewInventory || !InventoryGrid) return;
 
-	// 델리게이트 바인딩
-	CachedInventory->OnInventoryChanged.RemoveDynamic(this, &UInventoryRootWidget::HandleInventoryChanged); // 중복 바인딩 방지
-	CachedInventory->OnInventoryChanged.AddDynamic(this, &UInventoryRootWidget::HandleInventoryChanged); // 인벤토리 변경 시 HandleInventoryChanged 호출
-	// 최초 1회 그리기 
-	InventoryGrid->SetInventory(CachedInventory); // 인벤토리 그리드에 인벤토리 설정
-	InventoryGrid->RefreshGrid(); // 그리드 새로고침
+	/** 기존 인벤토리와의 바인딩이 있다면 해제합니다. */
+	if (CachedInventory)
+	{
+		CachedInventory->OnInventoryChanged.RemoveDynamic(this, &UInventoryRootWidget::HandleInventoryChanged);
+	}
+
+	/** 새로운 인벤토리를 캐싱하고 델리게이트를 바인딩합니다. */
+	CachedInventory = NewInventory;
+	CachedInventory->OnInventoryChanged.AddUniqueDynamic(this, &UInventoryRootWidget::HandleInventoryChanged);
+
+	/** 그리드 위젯에도 새로운 인벤토리를 전달하고 갱신합니다. */
+	InventoryGrid->SetInventory(CachedInventory);
+	InventoryGrid->RefreshGrid();
+
+	/** 상단 비밀번호 정보를 갱신합니다. */
+	UpdatePasswordDisplay();
 }
 
 void UInventoryRootWidget::NativeDestruct()
 {
-	if (CachedInventory) // 캐시된 인벤토리가 유효한 경우
+	if (CachedInventory)
 	{
-		CachedInventory->OnInventoryChanged.RemoveDynamic(this, &UInventoryRootWidget::HandleInventoryChanged); // 델리게이트 해제
-		CachedInventory = nullptr; // 캐시된 인벤토리 포인터 초기화
+		CachedInventory->OnInventoryChanged.RemoveDynamic(this, &UInventoryRootWidget::HandleInventoryChanged);
+		CachedInventory = nullptr;
 	}
-	Super::NativeDestruct(); // 부모 클래스의 NativeDestruct 호출
+	Super::NativeDestruct();
 }
 
 bool UInventoryRootWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
 {
-	if (!InOperation) return false; // 오퍼레이션이 없으면 실패
-	if (!InventoryGrid) return false; // 그리드가 없으면 실패
+	if (!InOperation) return false;
+	if (!InventoryGrid) return false;
 
-	UInventoryDragOperation* DragOp = Cast<UInventoryDragOperation>(InOperation); // 인벤 드래그인지 캐스팅
-	if (!DragOp) return false; // 인벤 드래그가 아니면 실패
+	/** 드래그 중인 오퍼레이션이 유효한 인벤토리 드래그 작업인지 확인합니다. */
+	UInventoryDragOperation* DragOp = Cast<UInventoryDragOperation>(InOperation);
+	if (!DragOp) return false;
 
-	const FVector2D ScreenPos = InDragDropEvent.GetScreenSpacePosition(); // 드랍된 화면 좌표
-	const FGeometry GridGeo = InventoryGrid->GetCachedGeometry(); // 그리드의 지오메트리
-	const bool bOverGrid = GridGeo.IsUnderLocation(ScreenPos); // 드랍 위치가 그리드 위인지 확인
+	/** 드롭된 위치(마우스 좌표)가 인벤토리 그리드 영역 안인지 밖인지 판별합니다. */
+	const FVector2D ScreenPos = InDragDropEvent.GetScreenSpacePosition();
+	const FGeometry GridGeo = InventoryGrid->GetCachedGeometry();
+	const bool bOverGrid = GridGeo.IsUnderLocation(ScreenPos);
 
 	if (bOverGrid)
 	{
-		//그리드 위에 떨어졌으면 그리드가 정상적으로 Move 또는 Add 처리
-		return InventoryGrid->HandleDropFromScreenPos(InOperation, ScreenPos); // 그리드로 전달
+		/** 그리드 내부에 드롭된 경우: 아이템 이동 또는 위치 교환 로직을 수행합니다. */
+		return InventoryGrid->HandleDropFromScreenPos(InOperation, ScreenPos);
 	}
 
+	/** 
+	 * 그리드 외부(빈 화면)에 드롭된 경우: 
+	 * 현재 드래그 중인 아이템을 캐릭터 위치에 실제로 버리는(Drop to World) 기능을 수행합니다.
+	 */
 	if (DragOp->SourceInventory) {
-		AQPCharacter* Character = Cast<AQPCharacter>(GetOwningPlayerPawn()); // 소유한 플레이어 폰을 AQPCharacter로 캐스팅
-		if (!Character) return false; // 캐스팅 실패 시 실패 반환
-		Character->DropInventoryItemAt(DragOp->FromCell); // 캐릭터의 해당 셀 아이템 월드에 드롭
-		return true; // 성공 반환
+		AQPCharacter* Character = Cast<AQPCharacter>(GetOwningPlayerPawn());
+		if (!Character) return false;
+		
+		/** 캐릭터 클래스에 구현된 외부 드랍 함수를 호출합니다. */
+		Character->DropInventoryItemAt(DragOp->FromCell);
+		return true;
 	}
-	return false;// 실패 반환 (월드에서 액터는 그리드 밖 드랍 무시)
+	return false;
 }
 
 void UInventoryRootWidget::HandleInventoryChanged()
 {
-	if (InventoryGrid) InventoryGrid->RefreshGrid(); // 인벤토리 그리드 새로고침
+	if (InventoryGrid) InventoryGrid->RefreshGrid();
+	UpdatePasswordDisplay();
+}
+
+void UInventoryRootWidget::UpdatePasswordDisplay()
+{
+	if (!PasswordText) return;
+
+	AQPCharacter* Character = Cast<AQPCharacter>(GetOwningPlayerPawn());
+	if (!Character) return;
+
+	TArray<int32> Collected = Character->GetCollectedPassword();
+
+	// 배열이 비어있다면 GameState에서 받아와서 임시 채움
+	if (Collected.Num() == 0)
+	{
+		if (AQPEscapeGameState* GS = GetWorld()->GetGameState<AQPEscapeGameState>())
+		{
+			if (GS->TotalGenerators > 0)
+			{
+				Collected.Init(-1, GS->TotalGenerators);
+			}
+		}
+	}
+
+	FString DisplayString;
+
+	// 인벤토리 상단에 표시될 문자열 생성 (예: "_ _ 3 _")
+	for (int32 i = 0; i < Collected.Num(); ++i)
+	{
+		if (Collected[i] == -1)
+		{
+			DisplayString += TEXT("_");
+		}
+		else
+		{
+			DisplayString += FString::FromInt(Collected[i]);
+		}
+
+		if (i < Collected.Num() - 1)
+		{
+			DisplayString += TEXT(" ");
+		}
+	}
+
+	PasswordText->SetText(FText::FromString(DisplayString));
 }

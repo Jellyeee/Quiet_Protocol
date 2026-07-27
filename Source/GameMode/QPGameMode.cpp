@@ -1,9 +1,27 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #include "PJ_Quiet_Protocol/GameMode/QPGameMode.h"
+#include "PJ_Quiet_Protocol/Audio/QPAudioSubsystem.h"
 #include "PJ_Quiet_Protocol/Character/QPCharacter.h"
 #include "GameFramework/PlayerStart.h"
 #include "Kismet/GameplayStatics.h"
+
+void AQPGameMode::BeginPlay()
+{
+	Super::BeginPlay();
+
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		if (UQPAudioSubsystem* AudioSubsystem = GI->GetSubsystem<UQPAudioSubsystem>())
+		{
+			// 월드 시작 시 메모리에 저장된 SoundClass 실시간 볼륨 수치 갱신
+			AudioSubsystem->EnsureSoundClassVolumesApplied();
+
+			if (GameBGM)
+			{
+				AudioSubsystem->PlayBGM(GameBGM);
+			}
+		}
+	}
+}
 
 void AQPGameMode::RequestRespawn(ACharacter* ElimmedCharacter, AController* ElimmedController)
 {

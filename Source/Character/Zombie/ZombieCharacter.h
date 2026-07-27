@@ -5,6 +5,9 @@
 #include "GameFramework/Character.h"
 #include "ZombieCharacter.generated.h"
 
+class UNiagaraSystem;
+class UParticleSystem;
+
 UCLASS()
 class PJ_QUIET_PROTOCOL_API AZombieCharacter : public ACharacter
 {
@@ -43,6 +46,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Zombie|Combat")
 	UAnimMontage* DeathMontage = nullptr; //좀비 사망 모션
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Zombie|FX")
+	UNiagaraSystem* BloodEffectNiagara = nullptr; // 피격 시 나이아가라 혈흔 이펙트
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Zombie|FX")
+	UParticleSystem* BloodEffectCascade = nullptr; // 피격 시 캐스케이드 혈흔 이펙트
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Zombie|Sound")
+	TObjectPtr<class USoundBase> HitSound = nullptr; // 피격 효과음
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Zombie|Sound")
+	TObjectPtr<class USoundBase> DeathSound = nullptr; // 사망 효과음
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Zombie|Runtime")
 	TObjectPtr<AActor> TargetActor = nullptr; //현재 타겟팅된 액터
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Zombie|Runtime")
@@ -66,6 +81,7 @@ public:
 	FORCEINLINE float GetAttackRange() const { return AttackRange; } //공격 범위 반환 함수
 private:
 	float LastAttackTime = -1000.f; //마지막 공격 시간
+	float LastHitSoundTime = -1000.f; // 샷건 다중 페렛 소리 겹침 방지용 마지막 피격음 재생 시간
 
 	bool bPrevOrientRotationToMovement = true; //이전 회전 방향 플래그
 	UFUNCTION()

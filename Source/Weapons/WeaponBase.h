@@ -63,6 +63,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Fire")
 	bool bAutomatic = true; //연사 여부
 
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Sound")
+	TObjectPtr<class USoundBase> FireSound; // 무기 발사 사운드
+
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Animation")
 	class UAnimMontage* FireMontage; //발사 몽타주
 	
@@ -72,13 +75,25 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Inventory", meta = (DisplayName = "Weapon Item Data (Inventory)", ToolTip = "E를 홀드하면 인벤토리에 저장할 때 사용할 아이템데이터 에셋"))
 	TObjectPtr<class UItemDataAsset> WeaponItemData = nullptr; //무기 아이템 데이터 에셋 포인터
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Attach")
+	FName PreferredAttachSocketName = NAME_None; // 무기별 전용 장착 소켓 이름 (지정하지 않으면 기본 소켓 사용)
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Attach")
+	FVector AttachRelativeLocation = FVector::ZeroVector; // 장착 시 상대적 위치 오프셋
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Attach")
+	FRotator AttachRelativeRotation = FRotator::ZeroRotator; // 장착 시 상대적 회전 오프셋
+
 public:
+	FORCEINLINE USoundBase* GetFireSound() const { return FireSound; }
 	FORCEINLINE UAnimMontage* GetFireMontage() const { return FireMontage; } //발사 몽타주 반환
 	FORCEINLINE UAnimMontage* GetReloadMontage() const { return ReloadMontage; } //재장전 몽타주 반환
 
 	UFUNCTION(BlueprintPure, Category = "Weapon|Inventory")
 	FORCEINLINE class UItemDataAsset* GetWeaponItemData() const { return WeaponItemData; } //무기 아이템 데이터 에셋 반환 함수
 
-
+	FORCEINLINE FName GetPreferredAttachSocketName() const { return PreferredAttachSocketName; }
+	FORCEINLINE FVector GetAttachRelativeLocation() const { return AttachRelativeLocation; }
+	FORCEINLINE FRotator GetAttachRelativeRotation() const { return AttachRelativeRotation; }
 
 };

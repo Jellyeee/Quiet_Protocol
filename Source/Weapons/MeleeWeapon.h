@@ -17,10 +17,17 @@ public:
 
 	virtual void StartFire_Implementation() override; //공격 시작 함수 재정의
 
+	UFUNCTION(BlueprintCallable, Category = "Weapon|Melee")
+	void ExecuteMeleeHit(); // 실제 휘두르는 타격 시점에 실행될 히트 판정 함수
+
 protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Melee", meta = (ClampMin = "0.0"))
 	float SwingRange = 180.f; //스윙 범위
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Melee", meta = (ClampMin = "0.0"))
 	float SwingRadius = 40.f; //스윙 반경
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Melee", meta = (ClampMin = "0.0"))
+	float SwingHitDelay = 0.22f; // 마우스 클릭 후 실제 히트 판정까지의 스윙 지연 시간 (초)
+
+	FTimerHandle MeleeHitTimerHandle;
 
 };

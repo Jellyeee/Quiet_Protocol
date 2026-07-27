@@ -13,10 +13,21 @@ class PJ_QUIET_PROTOCOL_API AWorldItemActor : public AActor
 public:	
 	AWorldItemActor();
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	UFUNCTION(BlueprintCallable, Category = "Item")
+	void UpdateItemMesh();
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item", ReplicatedUsing=OnRep_ItemData)
 	UItemDataAsset* ItemData; //아이템 정보
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item", Replicated)
 	int32 Quantity; //아이템 수량
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Password", Replicated)
+	int32 AssignedSlotIndex = -1; // -1이면 일반 아이템, 1~4면 키카드 슬롯 번호
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Password", Replicated)
+	int32 AssignedCodeNumber = -1; // 해당 슬롯의 비밀번호 숫자
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Item|Pickup")
 	TObjectPtr<class USceneComponent> Root; //루트 씬 컴포넌트
@@ -32,7 +43,15 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void OnConstruction(const FTransform& Transform) override;
+
+	UFUNCTION()
+	void OnRep_ItemData();
+
 private:
 	UPROPERTY(EditAnywhere, Category = "Item")
-	TObjectPtr<class USkeletalMeshComponent> ItemMesh; //아이템 메쉬 컴포넌트
+	TObjectPtr<class UStaticMeshComponent> ItemMesh; //아이템 메쉬 컴포넌트
+
+	UPROPERTY(EditAnywhere, Category = "Item")
+	TObjectPtr<class USkeletalMeshComponent> ItemSkeletalMesh; //스켈레탈 아이템 메쉬 컴포넌트
 };

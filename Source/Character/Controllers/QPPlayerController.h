@@ -23,6 +23,13 @@ public:
 	void ToggleInventory(); // 인벤토리 토글 함수
 	void ToggleLootInventory(); // 전리품 인벤토리 토글 함수
 
+	// 일시정지 메뉴 토글
+	UFUNCTION(BlueprintCallable, Category = "UI|Pause")
+	void TogglePauseMenu();
+
+	/** 모든 게임플레이 UI를 강제로 닫고 입력 모드를 초기화합니다. (사망 시 호출) */
+	void ClearAllUI();
+
 protected:
 	//Pickup Widget Class
 	UPROPERTY(EditDefaultsOnly, Category = "UI|Pickup")
@@ -35,12 +42,20 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "UI")
 	TSubclassOf<class UInventoryRootWidget> LootInventoryWidgetClass; // 전리품 인벤토리 위젯 클래스
 
+	UPROPERTY(EditDefaultsOnly, Category = "UI|Pause")
+	TSubclassOf<class UUserWidget> PauseMenuWidgetClass; // 일시정지 메뉴 위젯 클래스
+
 private:
 	//Pickup Widget Instance
 	UPROPERTY()
 	TObjectPtr<class UQPPickupWidget> PickupWidget; // 픽업 위젯 인스턴스
 	UPROPERTY()
 	TObjectPtr<class UUserWidget> InventoryWidget; // 인벤토리 위젯 인스턴스
+
+	UPROPERTY()
+	TObjectPtr<class UUserWidget> PauseMenuWidget; // 일시정지 메뉴 인스턴스
+
+	bool bPauseMenuOpen = false; // 일시정지 메뉴 열림 여부
 
 	bool bInventoryOpen = false; // 인벤토리 열림 여부
 	void SetInventoryOpen(bool bOpen); // 인벤토리 열림 상태 설정 함수

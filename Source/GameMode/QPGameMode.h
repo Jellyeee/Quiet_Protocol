@@ -18,4 +18,11 @@ public:
 	// 캐릭터 사망 시 10초 대기 후 리스폰을 요청하는 함수
 	UFUNCTION(BlueprintCallable, Category = "GameMode")
 	virtual void RequestRespawn(class ACharacter* ElimmedCharacter, class AController* ElimmedController);
+
+protected:
+	virtual void BeginPlay() override;
+
+	/** 해당 게임모드 기본 BGM 에셋 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "QP|Sound")
+	TObjectPtr<class USoundBase> GameBGM;
 };

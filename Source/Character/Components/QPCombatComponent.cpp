@@ -2,7 +2,10 @@
 #include "GameFramework/Character.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "PJ_Quiet_Protocol/Weapons/WeaponBase.h"
+#include "PJ_Quiet_Protocol/Audio/QPAudioSubsystem.h"
+#include "PJ_Quiet_Protocol/Weapons/GunWeapon.h"
 #include "PJ_Quiet_Protocol/Character/QPCharacter.h"
+#include "PJ_Quiet_Protocol/Inventory/InventoryComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/HUD.h"
 #include "PJ_Quiet_Protocol/UserWidget/Crosshair/QPCrosshair.h"
@@ -10,8 +13,9 @@
 
 #include "TimerManager.h"
 #include "Engine/World.h"
+#include "GameFramework/CharacterMovementComponent.h"
 
-#define TRACE_LENGTH 80000.f //충돌 검사 거리
+static constexpr float TraceLength = 80000.f;
 
 UQPCombatComponent::UQPCombatComponent()
 {
@@ -20,25 +24,30 @@ UQPCombatComponent::UQPCombatComponent()
 	HitTarget = FVector::ZeroVector;
 	TraceHitTarget = FVector::ZeroVector;
 	LastHitTarget = FVector::ZeroVector;
-	CrosshairScreenOffset = FVector2D::ZeroVector;
+	CrosshairScreenOffset = FVector2D(-100.f, 0.f);
+	HipFireCenterOffset = FVector2D(-100.f, 0.f);
+	AimingBaseOffset = FVector2D(-100.f, 0.f);
 
 	SetIsReplicatedByDefault(true); // 컴포넌트 리플리케이션 활성화
 }
 
+// 네트워크로 복제할 변수 등록
 void UQPCombatComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-
-	DOREPLIFETIME(UQPCombatComponent, EquippedWeapon);
-	DOREPLIFETIME(UQPCombatComponent, bIsAttacking);
+	
+	DOREPLIFETIME(UQPCombatComponent, EquippedWeapon); 
+	DOREPLIFETIME(UQPCombatComponent, bIsAttacking); 
 	DOREPLIFETIME(UQPCombatComponent, bIsAiming);
-	DOREPLIFETIME(UQPCombatComponent, TraceHitTarget); // 주인은 로컬에서 계산하므로 받지 않음 -> 조건 제거 (확실한 동기화)
+	DOREPLIFETIME(UQPCombatComponent, bIsReloading);
+	DOREPLIFETIME(UQPCombatComponent, TraceHitTarget); 
+	DOREPLIFETIME(UQPCombatComponent, CrosshairSpread);
 }
 
 void UQPCombatComponent::BeginPlay()
 {
 	Super::BeginPlay();
-	OwnerCharacter = Cast<ACharacter>(GetOwner()); //소유한 캐릭터 가져오기
+	OwnerCharacter = Cast<ACharacter>(GetOwner());
 
 	// 게임 시작 시 크로스헤어 오프셋 초기화 (HUD에서 가져오기)
 	if (OwnerCharacter)
@@ -65,7 +74,7 @@ void UQPCombatComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		TraceUnderCrosshairs(HitResult);
 		HitTarget = HitResult.ImpactPoint;
 
-		// 거리 10cm 이상 차이날 때만 전송 (네트워크 최적화)
+		// 네트워크 최적화: 일정 거리 이상 차이날 때만 전송
 		if (FVector::DistSquared(HitTarget, LastHitTarget) > 100.f) 
 		{
 			// 0.05초마다 전송 (네트워크 최적화)
@@ -85,6 +94,31 @@ void UQPCombatComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		// 서버/다른 클라이언트에서는 TraceHitTarget을 그대로 사용 (동기화된 값)
 		HitTarget = TraceHitTarget; 
 	}
+
+	// [Smooth Recoil] 부드러운 카메라 반동 적용 (로컬 플레이어만)
+	if (OwnerCharacter && OwnerCharacter->IsLocallyControlled())
+	{
+		if (!FMath::IsNearlyZero(TargetRecoilPitch, 0.001f) || !FMath::IsNearlyZero(TargetRecoilYaw, 0.001f))
+		{
+			// 현재 프레임에 적용할 반동량 계산 (보간을 통해 부드럽게)
+			float PitchStep = FMath::FInterpTo(0.f, TargetRecoilPitch, DeltaTime, RecoilInterpSpeed);
+			float YawStep = FMath::FInterpTo(0.f, TargetRecoilYaw, DeltaTime, RecoilInterpSpeed);
+
+			OwnerCharacter->AddControllerPitchInput(-PitchStep);
+			OwnerCharacter->AddControllerYawInput(YawStep);
+
+			// 적용한 만큼 목표치에서 차감
+			TargetRecoilPitch -= PitchStep;
+			TargetRecoilYaw -= YawStep;
+
+			// 미세한 값이 남았을 때 완전히 0으로 수렴
+			if (FMath::Abs(TargetRecoilPitch) < 0.01f) TargetRecoilPitch = 0.f;
+			if (FMath::Abs(TargetRecoilYaw) < 0.01f) TargetRecoilYaw = 0.f;
+		}
+	}
+
+	// 확산 값 업데이트 (서버/로컬 공통 또는 상황에 맞춰)
+	UpdateCrosshairSpread(DeltaTime);
 }
 
 void UQPCombatComponent::ServerSetHitTarget_Implementation(const FVector_NetQuantize& TraceHitTarget_Arg)
@@ -148,18 +182,59 @@ void UQPCombatComponent::UpdateCrosshairPosition(float DeltaTime)
 	}
 }
 
+void UQPCombatComponent::UpdateCrosshairSpread(float DeltaTime)
+{
+	if (!OwnerCharacter) return;
+
+	// 1. 속도에 따른 확산 계산
+	FVector Velocity = OwnerCharacter->GetVelocity();
+	Velocity.Z = 0.f;
+	float Speed = Velocity.Size();
+
+	// 속도 계수(CrosshairVelocityFactor)를 적용하여 기본 이동 확산 계산
+	float VelocitySpread = FMath::GetMappedRangeValueClamped(FVector2D(0.f, 600.f), FVector2D(0.f, CrosshairSpreadMax), Speed);
+	VelocitySpread *= CrosshairVelocityFactor;
+
+	// 2. 공중 상태에 따른 확산 계산
+	float InAirSpread = 0.f;
+	if (OwnerCharacter->GetCharacterMovement() && OwnerCharacter->GetCharacterMovement()->IsFalling())
+	{
+		// 공중 계수(CrosshairInAirFactor) 적용
+		InAirSpread = CrosshairSpreadMax * CrosshairInAirFactor;
+	}
+
+	// 3. 조준 상태에 따른 확산 보정 (조준 시에도 이동/공중 상태에서는 일정량의 확산 유지)
+	if (bIsAiming)
+	{
+		// 기존 0.1f -> 0.4f 로 상향 (조준 중 이동 시 탄착군 벌어짐 증가)
+		VelocitySpread *= 0.4f;
+		// 기존 0.2f -> 0.5f 로 상향 (조준 중 공중 상태 시 탄착군 벌어짐 증가)
+		InAirSpread *= 0.5f;
+	}
+
+	float TargetSpread = VelocitySpread + InAirSpread;
+
+	// 현재 확산 값에서 목표 확산 값으로 보간 (부드러운 확산 변화)
+	// 사격 등으로 인해 확산이 커진 상태에서 TargetSpread로 서서히 수렴함
+	CrosshairSpread = FMath::FInterpTo(CrosshairSpread, TargetSpread, DeltaTime, 10.f);
+}
+
 void UQPCombatComponent::OnRep_EquippedWeapon() //서버에서 EquippedWeapon이 변경될 때마다 클라이언트에서 호출
 {
 	if (!OwnerCharacter) 
 	{
-		OwnerCharacter = Cast<ACharacter>(GetOwner()); //소유한 캐릭터가 유효하지 않으면 다시 가져오기
+		OwnerCharacter = Cast<ACharacter>(GetOwner());
 	}
 	
 	if (EquippedWeapon && OwnerCharacter) 
 	{
-		EquippedWeapon->OnEquipped(OwnerCharacter);  //무기 장착 처리 호출
-		AttachWeaponToCharacter(EquippedWeapon); //캐릭터에 무기 부착
-		SetWeaponType(EquippedWeapon->GetWeaponType()); //무기 타입 설정
+		EquippedWeapon->OnEquipped(OwnerCharacter);
+		AttachWeaponToCharacter(EquippedWeapon);
+		SetWeaponType(EquippedWeapon->GetWeaponType());
+	}
+	else
+	{
+		SetWeaponType(EQPWeaponType::EWT_None);
 	}
 }
 
@@ -173,18 +248,18 @@ bool UQPCombatComponent::EquipWeapon(AWeaponBase* NewWeapon, bool bUnequipCurren
 	EquippedWeapon = NewWeapon; //새 무기 장착
 
 	//소유자/충돌 기본 처리 (나중에 확장)
-	EquippedWeapon->SetOwner(OwnerCharacter);//소유자 설정
-	EquippedWeapon->SetInstigator(Cast<APawn>(OwnerCharacter)); //인스티게이터 설정
-	EquippedWeapon->SetActorEnableCollision(false); //충돌 비활성화
-	EquippedWeapon->OnEquipped(OwnerCharacter); //무기 장착 처리 호출
-	if (!AttachWeaponToCharacter(EquippedWeapon)) //캐릭터에 무기 부착 실패 시
+	EquippedWeapon->SetOwner(OwnerCharacter);
+	EquippedWeapon->SetInstigator(Cast<APawn>(OwnerCharacter));
+	EquippedWeapon->SetActorEnableCollision(false);
+	EquippedWeapon->OnEquipped(OwnerCharacter);
+	if (!AttachWeaponToCharacter(EquippedWeapon))
 	{
-		EquippedWeapon->OnUnequipped(true); //무기 해제 처리 호출
-		EquippedWeapon = nullptr; //장착 실패 시 무기 초기화
-		SetWeaponType(EQPWeaponType::EWT_None); //무기 타입 없음으로 설정
-		return false; //false 반환
+		EquippedWeapon->OnUnequipped(true);
+		EquippedWeapon = nullptr;
+		SetWeaponType(EQPWeaponType::EWT_None);
+		return false;
 	}
-	SetWeaponType(NewWeapon->GetWeaponType()); //무기 타입 설정 ( WeaponBase에서 GetWeaponType() 구현 필요 )
+	SetWeaponType(NewWeapon->GetWeaponType());
 	return true; //성공적으로 장착했으므로 true 반환
 }
 
@@ -196,12 +271,21 @@ bool UQPCombatComponent::UnEquipWeapon(bool bDropToWorld)
 	}
 	StopAttack(); //공격 중지
 
-	EquippedWeapon->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform); //월드 트랜스폼 유지하며 분리
-	EquippedWeapon->OnUnequipped(bDropToWorld); //무기 해제 처리 호출
+	MulticastUnEquipWeapon(EquippedWeapon, bDropToWorld); // 서버 및 클라이언트 모두에서 물리 및 충돌 활성화
+
 	EquippedWeapon = nullptr; //장착된 무기 초기화
 
 	SetWeaponType(EQPWeaponType::EWT_None); //무기 타입 없음으로 설정
 	return true; //성공적으로 해제했으므로 true 반환
+}
+
+void UQPCombatComponent::MulticastUnEquipWeapon_Implementation(AWeaponBase* WeaponToUnEquip, bool bDropToWorld)
+{
+	if (WeaponToUnEquip)
+	{
+		WeaponToUnEquip->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+		WeaponToUnEquip->OnUnequipped(bDropToWorld);
+	}
 }
 
 //서버에서 클라이언트로 무기 장착 요청 처리 함수 구현
@@ -221,11 +305,33 @@ void UQPCombatComponent::StartAttack()
 		bCanFireSingleShot = false; // 플래그 잠금
 	}
 
-	// [Fix] 클라이언트(로컬)에서도 쿨타임 검사를 수행하여 연타 시 애니메이션 재시작을 방지
-	if (!CanFire(EquippedWeapon->IsAutomatic())) return;
+	// 장전 중 사격 처리
+	if (bIsReloading)
+	{
+		if (EquippedWeaponType == EQPWeaponType::EWT_Shotgun)
+		{
+			CancelReload(); // 예약된 장전 취소 후 즉시 발사
+		}
+		else
+		{
+			return; // 권총, 소총의 경우 장전 중 사격 불가
+		}
+	}
+	else
+	{
+		// [Fix] 클라이언트(로컬)에서도 쿨타임 검사를 수행하여 연타 시 애니메이션 재시작을 방지
+		if (!CanFire(EquippedWeapon->IsAutomatic())) return;
+	}
 
-	SetIsAttacking(true); // [Prediction] 로컬에서 즉시 반응
-	ServerStartAttack(); // 서버에 공격 요청
+	// [Fix] 로컬 클라이언트에서도 발사 시간을 일정 부분 갱신하여 쿨타임(FireRate)을 즉시 적용시킵니다.
+	// (단, 서버/호스트는 Fire() 내부에서 정확한 시점으로 다시 갱신합니다)
+	if (OwnerCharacter && !OwnerCharacter->HasAuthority())
+	{
+		LastFireTime = GetWorld()->GetTimeSeconds();
+	}
+
+	SetIsAttacking(true);
+	ServerStartAttack();
 }
 
 //발사 가능 여부 체크 함수 (자동/비자동 무기 구분)
@@ -239,6 +345,12 @@ bool UQPCombatComponent::CanFire(bool bAutomatic)
 	{
 		return false;
 	}
+
+	if (AGunWeapon* Gun = Cast<AGunWeapon>(EquippedWeapon))
+	{
+		if (Gun->GetCurrentAmmo() <= 0) return false;
+	}
+
 	return true;
 }
 
@@ -247,8 +359,23 @@ void UQPCombatComponent::ServerStartAttack_Implementation()
 {
 	if (!EquippedWeapon) return;
 
-	// 근접 무기 및 단/연발 화기를 포함하여 모두 설정된 FireRate 만큼의 쿨타임 체크 수행
-	if (!CanFire(EquippedWeapon->IsAutomatic())) return;
+	// 장전 중 사격 처리 (서버)
+	if (bIsReloading)
+	{
+		if (EquippedWeaponType == EQPWeaponType::EWT_Shotgun)
+		{
+			CancelReload(); // 예약된 장전 취소 후 즉시 발사 허용
+		}
+		else
+		{
+			return; // 권총, 소총의 경우 장전 중 사격 불가
+		}
+	}
+	else
+	{
+		// 근접 무기 및 단/연발 화기를 포함하여 모두 설정된 FireRate 만큼의 쿨타임 체크 수행
+		if (!CanFire(EquippedWeapon->IsAutomatic())) return;
+	}
 
 	SetIsAttacking(true); // 공격 상태 true로 설정 (Replicated)
 	
@@ -281,8 +408,34 @@ void UQPCombatComponent::ServerStopAttack_Implementation()
 
 void UQPCombatComponent::Reload()
 {
-	// 탄약 체크 등 선행 조건 확인 (추후 구현)
-	if (EquippedWeapon)
+	if (!OwnerCharacter || !EquippedWeapon) return;
+	if (bIsReloading) return; // 이미 장전 중인지 확인
+
+	// 탄약 체크 등 선행 조건 확인 (클라이언트 측 평가)
+	if (OwnerCharacter->IsLocallyControlled())
+	{
+		if (AGunWeapon* Gun = Cast<AGunWeapon>(EquippedWeapon))
+		{
+			int32 CurrentAmmo = Gun->GetCurrentAmmo();
+			int32 MagCapacity = Gun->GetMagCapacity();
+			int32 AmountNeeded = MagCapacity - CurrentAmmo;
+			
+			// 장전이 필요한 상황인지 확인 (탄창이 가득 차지 않음)
+			if (AmountNeeded > 0)
+			{
+				// 인벤토리에 해당 무기의 탄약이 있는지 확인
+				if (UInventoryComponent* InvComp = OwnerCharacter->FindComponentByClass<UInventoryComponent>())
+				{
+					int32 TotalAmmo = InvComp->GetTotalAmmo(Gun->GetWeaponType());
+					if (TotalAmmo > 0)
+					{
+						ServerReload(); // 탄약이 존재하므로 서버 측 애니메이션 재생 요청
+					}
+				}
+			}
+		}
+	}
+	else if (OwnerCharacter->HasAuthority()) // AI나 특수한 환경 (하지만 플레이어 인벤토리 구조상 주로 로컬 클라이언트에서 실행해야 함)
 	{
 		ServerReload();
 	}
@@ -290,9 +443,142 @@ void UQPCombatComponent::Reload()
 
 void UQPCombatComponent::ServerReload_Implementation()
 {
-	if (!OwnerCharacter || !EquippedWeapon) return; //소유한 캐릭터나 장착된 무기가 유효하지 않으면 반환
+	if (!OwnerCharacter || !EquippedWeapon) return;
+	if (bIsReloading) return; // 이미 장전 중인지 확인
 
-	MulticastReload(); // 모든 클라이언트에서 재장전 애니메이션/이펙트 동기화용 함수 호출 (Unreliable로 설정하여 네트워크 최적화)
+	bIsReloading = true; // 서버에서 장전 상태 돌입
+	MulticastReload(); // 모든 클라이언트에서 애니메이션 재생 시퀀스 시작
+}
+
+void UQPCombatComponent::FinishReload()
+{
+	if (!OwnerCharacter || !EquippedWeapon) return;
+
+	// 권총/라이플 재장전 완료 노티파이는 모든 클라이언트에서 실행될 수 있으므로
+	// 로컬 플레이어만 인벤토리에서 자신이 가진 탄약을 차감하고, 이를 서버로 알립니다.
+	if (OwnerCharacter->IsLocallyControlled())
+	{
+		if (AGunWeapon* Gun = Cast<AGunWeapon>(EquippedWeapon))
+		{
+			int32 CurrentAmmo = Gun->GetCurrentAmmo();
+			int32 MagCapacity = Gun->GetMagCapacity();
+			int32 AmountNeeded = MagCapacity - CurrentAmmo;
+			
+			if (AmountNeeded > 0)
+			{
+				// 인벤토리에서 필요한 만큼 탄약 차감 시도
+				if (UInventoryComponent* InvComp = OwnerCharacter->FindComponentByClass<UInventoryComponent>())
+				{
+					int32 ConsumedAmmo = InvComp->ConsumeAmmo(Gun->GetWeaponType(), AmountNeeded);
+					if (ConsumedAmmo > 0)
+					{
+						// 차감된 탄약만큼 무기에 추가해달라고 서버에 요청
+						ServerFinishReload(ConsumedAmmo);
+					}
+				}
+			}
+		}
+	}
+}
+
+void UQPCombatComponent::ServerFinishReload_Implementation(int32 AddedAmmo)
+{
+	if (!OwnerCharacter || !EquippedWeapon) return;
+	
+	if (AGunWeapon* Gun = Cast<AGunWeapon>(EquippedWeapon))
+	{
+		Gun->AddAmmo(AddedAmmo);
+	}
+	bIsReloading = false; // 장전 프로세스 완료 및 플래그 해제
+}
+
+void UQPCombatComponent::InsertShotgunShell()
+{
+	if (!OwnerCharacter || !EquippedWeapon) return;
+
+	// 로컬 플레이어만 인벤토리 탄약을 1발 소모한 뒤 서버에 알립니다.
+	if (OwnerCharacter->IsLocallyControlled())
+	{
+		if (AGunWeapon* Gun = Cast<AGunWeapon>(EquippedWeapon))
+		{
+			int32 CurrentAmmo = Gun->GetCurrentAmmo();
+			int32 MagCapacity = Gun->GetMagCapacity();
+			
+			if (CurrentAmmo < MagCapacity)
+			{
+				if (UInventoryComponent* InvComp = OwnerCharacter->FindComponentByClass<UInventoryComponent>())
+				{
+					// 샷건은 한 발씩만 소모
+					int32 ConsumedAmmo = InvComp->ConsumeAmmo(Gun->GetWeaponType(), 1); 
+					if (ConsumedAmmo > 0)
+					{
+						ServerInsertShotgunShell(1); // 1발 추가해달라고 서버에 요청
+					}
+					else
+					{
+						CancelReload(); // 탄약이 없으면 장전 종료 및 몽타주 중단 (클라이언트 -> 서버 통보)
+					}
+				}
+			}
+			else
+			{
+				CancelReload(); // 이미 꽉참 (클라이언트 -> 서버 통보)
+			}
+		}
+	}
+}
+
+void UQPCombatComponent::ServerInsertShotgunShell_Implementation(int32 AddedAmmo)
+{
+	if (!OwnerCharacter || !EquippedWeapon) return;
+	
+	if (AGunWeapon* Gun = Cast<AGunWeapon>(EquippedWeapon))
+	{
+		Gun->AddAmmo(AddedAmmo);
+		
+		int32 MagCapacity = Gun->GetMagCapacity();
+		if (Gun->GetCurrentAmmo() >= MagCapacity)
+		{
+			// 서버에서 더 이상 장전할 필요가 없다면 강제로 취소(완료) 통보
+			bIsReloading = false;
+			MulticastCancelReload(); 
+		}
+	}
+}
+
+void UQPCombatComponent::CancelReload()
+{
+	// 클라이언트에서 예약된 장전 취소를 수행할 때는 서버에 취소를 요청합니다.
+	if (OwnerCharacter && OwnerCharacter->IsLocallyControlled())
+	{
+		ServerCancelReload();
+	}
+	else if (OwnerCharacter && OwnerCharacter->HasAuthority())
+	{
+		bIsReloading = false;
+		MulticastCancelReload();
+	}
+}
+
+void UQPCombatComponent::ServerCancelReload_Implementation()
+{
+	if (bIsReloading)
+	{
+		bIsReloading = false;
+		MulticastCancelReload();
+	}
+}
+
+void UQPCombatComponent::MulticastCancelReload_Implementation()
+{
+	if (AQPCharacter* QPChar = Cast<AQPCharacter>(OwnerCharacter))
+	{
+		if (UAnimInstance* AnimInstance = QPChar->GetMesh()->GetAnimInstance())
+		{
+			// 현재 재생 중인 장전 애니메이션(몽타주)을 즉시 중단합니다.
+			AnimInstance->Montage_Stop(0.2f);
+		}
+	}
 }
 
 void UQPCombatComponent::MulticastReload_Implementation()
@@ -309,7 +595,20 @@ void UQPCombatComponent::Fire()
 
 	if (!EquippedWeapon || !OwnerCharacter) return; //소유한 캐릭터나 장착된 무기가 유효하지 않으면 반환
 	
+	// 연사 도중 총알이 소진된 경우 발사 중지 및 타이머 해제
+	if (AGunWeapon* Gun = Cast<AGunWeapon>(EquippedWeapon))
+	{
+		if (Gun->GetCurrentAmmo() <= 0)
+		{
+			ServerStopAttack_Implementation(); // 서버/로컬 공격 중지 처리 (타이머 해제)
+			return;
+		}
+	}
+
 	LastFireTime = GetWorld()->GetTimeSeconds(); //발사 시점 업데이트 (쿨타임 체크용)
+
+	// 사격 시 확산 추가 (ShootingFactor 만큼 즉시 벌어짐)
+	CrosshairSpread = FMath::Min(CrosshairSpreadMax * 1.5f, CrosshairSpread + CrosshairShootingFactor);
 
 	EquippedWeapon->StartFire(); //무기 발사 시작
 	MulticastFire(bIsAiming); //모든 클라이언트에서 발사 애니메이션 재생 (조준 상태 전달)
@@ -320,6 +619,40 @@ void UQPCombatComponent::MulticastFire_Implementation(bool bInIsAiming)
 	if (AQPCharacter* QPChar = Cast<AQPCharacter>(OwnerCharacter)) //애니메이션 재생
 	{
 		QPChar->PlayFireMontage(bInIsAiming); //조준 상태에 따라 발사 몽타주 재생
+
+		if (EquippedWeapon && EquippedWeapon->GetFireSound())
+		{
+			float VolumeMultiplier = 1.0f;
+			if (UWorld* World = GetWorld())
+			{
+				if (UGameInstance* GI = World->GetGameInstance())
+				{
+					if (UQPAudioSubsystem* AudioSubsystem = GI->GetSubsystem<UQPAudioSubsystem>())
+					{
+						VolumeMultiplier = AudioSubsystem->GetSFXVolume() * AudioSubsystem->GetMasterVolume();
+					}
+				}
+			}
+
+			UGameplayStatics::PlaySoundAtLocation(this, EquippedWeapon->GetFireSound(), EquippedWeapon->GetActorLocation(), VolumeMultiplier);
+		}
+
+		if (AGunWeapon* Gun = Cast<AGunWeapon>(EquippedWeapon))
+		{
+			// [Visual] 탄피 배출 (모든 클라이언트의 화면에서 각각 로컬 물리 연산으로 처리됨)
+			Gun->EjectCasing();
+
+			// 로컬 조작 플레이어인 경우에만 카메라 반동(Recoil) 적용
+			if (QPChar->IsLocallyControlled())
+			{
+				float PitchRecoil = FMath::RandRange(Gun->GetRecoilPitchMin(), Gun->GetRecoilPitchMax());
+				float YawRecoil = FMath::RandRange(Gun->GetRecoilYawMin(), Gun->GetRecoilYawMax());
+				
+				// 기존(즉시 적용) -> 변경(Target에 누적하여 Tick에서 보간)
+				TargetRecoilPitch += PitchRecoil;
+				TargetRecoilYaw += YawRecoil;
+			}
+		}
 	}
 }
 
@@ -342,7 +675,25 @@ bool UQPCombatComponent::AttachWeaponToCharacter(AWeaponBase* Weapon)
 	if (!OwnerCharacter || !Weapon) return false; //소유한 캐릭터나 무기가 유효하지 않으면 false 반환
 	USkeletalMeshComponent* MeshComponent = OwnerCharacter->GetMesh(); //캐릭터의 스켈레탈 메쉬 컴포넌트 가져오기
 	if (!MeshComponent) return false; //메쉬 컴포넌트가 유효하지 않으면 false 반환
-	Weapon->AttachToComponent(MeshComponent, FAttachmentTransformRules::SnapToTargetIncludingScale, EquipSocketName); //무기를 캐릭터 메쉬에 부착
+
+	FName SocketToUse = Weapon->GetPreferredAttachSocketName();
+	if (SocketToUse == NAME_None || !MeshComponent->DoesSocketExist(SocketToUse))
+	{
+		SocketToUse = EquipSocketName; // 기본 무기 소켓 사용
+	}
+
+	Weapon->AttachToComponent(MeshComponent, FAttachmentTransformRules::SnapToTargetIncludingScale, SocketToUse); //무기를 캐릭터 메쉬에 부착
+	
+	// 무기별 개별 오프셋이 설정되어 있는 경우 상대 위치 및 회전 적용
+	if (!Weapon->GetAttachRelativeLocation().IsZero())
+	{
+		Weapon->SetActorRelativeLocation(Weapon->GetAttachRelativeLocation());
+	}
+	if (!Weapon->GetAttachRelativeRotation().IsZero())
+	{
+		Weapon->SetActorRelativeRotation(Weapon->GetAttachRelativeRotation());
+	}
+
 	return true; //성공적으로 부착했으므로 true 반환
 }
 
@@ -408,7 +759,7 @@ void UQPCombatComponent::TraceUnderCrosshairs(FHitResult& TraceHitResult)
 	if (bScreenToWorld) //스크린을 월드로 변환 성공 시
 	{
 		const FVector Start = CorsshairWorldLocation; //시작 위치 설정
-		const FVector End = Start + (CorsshairWorldDirection * TRACE_LENGTH); //끝 위치 설정 (80,000 유닛 앞)
+		const FVector End = Start + (CorsshairWorldDirection * TraceLength);
 		
 		FCollisionQueryParams QueryParams;
 		QueryParams.AddIgnoredActor(OwnerCharacter); // 자기 자신(캐릭터) 무시하여 엉뚱한 충돌 방지
@@ -445,7 +796,7 @@ FVector UQPCombatComponent::GetMuzzleHitTarget() const
 
 	const FTransform MuzzleTransform = WeaponMesh->GetSocketTransform(TEXT("MuzzleFlash"), RTS_World);
 	const FVector Start = MuzzleTransform.GetLocation();
-	const FVector End = Start + (MuzzleTransform.GetUnitAxis(EAxis::X) * TRACE_LENGTH);
+	const FVector End = Start + (MuzzleTransform.GetUnitAxis(EAxis::X) * TraceLength);
 
 	FHitResult FireHit; // 트레이스 결과 저장 변수
 	GetWorld()->LineTraceSingleByChannel(

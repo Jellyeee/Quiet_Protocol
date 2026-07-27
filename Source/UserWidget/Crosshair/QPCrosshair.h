@@ -22,7 +22,7 @@ public:
 
 	// 크로스헤어의 위치를 화면 중앙에서 얼마나 떨어뜨릴지 결정하는 변수
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crosshair")
-	FVector2D CrosshairScreenOffset = FVector2D(150.f, 150.f); // 화면 중앙으로부터의 오프셋 (양수: 우/하)
+	FVector2D CrosshairScreenOffset = FVector2D(0.f, 0.f); // 화면 중앙으로부터의 오프셋 (양수: 우/하)
 
 	// 크로스헤어의 각 부분을 나타내는 텍스처 변수들
 	UPROPERTY(EditAnywhere, Category = "Crosshair")
@@ -60,7 +60,13 @@ public:
 	float CrosshairShootingFactor = 2.f; // 사격 시 확산 증가 계수 
 
 
+	UFUNCTION(BlueprintCallable, Category = "UI")
+	void ShowBigMessage(const FString& Message, float Duration = 3.f);
+
 private:
 	void DrawCrosshairPart(UTexture2D* Texture, FVector2D ViewportCenter, FVector2D Spread); // 각 크로스헤어 부분을 그리는 함수
 	
+	FString CurrentMessage;
+	float MessageTimer = 0.f;
+	FLinearColor CurrentMessageColor = FLinearColor::White;
 };

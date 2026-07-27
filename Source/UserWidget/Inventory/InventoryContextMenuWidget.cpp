@@ -12,14 +12,36 @@ void UInventoryContextMenuWidget::NativeConstruct()
 
 	SetIsFocusable(true); // 위젯을 포커스 가능하게 설정
 
-	if (BtnEquip) BtnEquip->OnClicked.AddDynamic(this, &UInventoryContextMenuWidget::OnClickedBtnEquip); // 장착 버튼 클릭 이벤트 바인딩
-	if (BtnDrop)  BtnDrop->OnClicked.AddDynamic(this, &UInventoryContextMenuWidget::OnClickedBtnDrop);   // 버리기 버튼 클릭 이벤트 바인딩
-	if (BtnClose) BtnClose->OnClicked.AddDynamic(this, &UInventoryContextMenuWidget::OnClickedBtnClose); // 닫기 버튼 클릭 이벤트 바인딩
+	// 버튼들이 포커스를 뺏어가서 메뉴가 닫히는 현상(클릭 무시)을 방지
+	if (BtnEquip) 
+	{
+		BtnEquip->IsFocusable = false;
+		BtnEquip->OnClicked.AddDynamic(this, &UInventoryContextMenuWidget::OnClickedBtnEquip); 
+	}
+	if (BtnDrop)  
+	{
+		BtnDrop->IsFocusable = false;
+		BtnDrop->OnClicked.AddDynamic(this, &UInventoryContextMenuWidget::OnClickedBtnDrop);   
+	}
+	if (BtnClose) 
+	{
+		BtnClose->IsFocusable = false;
+		BtnClose->OnClicked.AddDynamic(this, &UInventoryContextMenuWidget::OnClickedBtnClose); 
+	}
 }
 
 void UInventoryContextMenuWidget::NativeOnFocusLost(const FFocusEvent& InFocusEvent)
 {
 	Super::NativeOnFocusLost(InFocusEvent); // 부모 클래스의 NativeOnFocusLost 호출
+	
+	// 마우스가 메뉴(혹은 버튼) 위에 있다면 버튼을 클릭한 것이므로 닫지 않음
+	if (IsHovered())
+	{
+		return;
+	}
+
+	// 다른 곳(허공이나 다른 아이템)을 클릭하면 메뉴를 자동으로 닫음
+	RemoveFromParent();
 }
 
 void UInventoryContextMenuWidget::OnClickedBtnEquip()

@@ -20,7 +20,10 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Animation")
 	float Speed = 0.f; // 이동 속도
 	UPROPERTY(BlueprintReadOnly, Category = "Animation")
-	float Direction = 0.f; //이동 방향
+	float Direction = 0.f; // 이동 방향 (0 ~ 360)
+
+	UPROPERTY(BlueprintReadOnly, Category = "Animation")
+	float LocomotionDirection = 0.f; // 4방향 스냅된 애니메이션 방향 (0, 90, 180, 270)
 
 	UPROPERTY(BlueprintReadOnly, Category = "Animation")
 	bool bIsInAir = false; // 공중에 있는지 여부
@@ -34,6 +37,8 @@ public:
 	EQPWeaponType WeaponType = EQPWeaponType::EWT_None; // 장착된 무기 타입
 	UPROPERTY(BlueprintReadOnly, Category = "Animation")
 	bool bIsAttacking = false; // 공격 중인지 여부
+	UPROPERTY(BlueprintReadOnly, Category = "Animation")
+	bool bIsReloading = false; // 장전 중인지 여부
 	UPROPERTY(BlueprintReadOnly, Category = "Animation")
 	bool bIsAiming = false; // 조준 중인지 여부
 	UPROPERTY(BlueprintReadOnly, Category = "Animation")
@@ -68,7 +73,10 @@ protected:
 	FTransform LeftHandIKTransform; // 왼손 IK 트랜스폼
 
 	UPROPERTY(BlueprintReadOnly, Category = "IK")
-	bool bUseLeftHandIK = false; // 왼손 IK 사용 여부
+	bool bUseLeftHandIK = false; // 왼손 IK 사용 여부 (구버전 호환)
+
+	UPROPERTY(BlueprintReadOnly, Category = "IK")
+	float LeftHandIKAlpha = 1.0f; // 왼손 IK의 부드러운 가중치 (애니메이션 커브와 연동)
 
 	UPROPERTY(BlueprintReadOnly, Category = "Turn")
 	float RootYawOffset = 0.f; // 루트 Yaw 오프셋
