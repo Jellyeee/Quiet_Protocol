@@ -133,3 +133,12 @@ void AWorldItemActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 	DOREPLIFETIME(AWorldItemActor, AssignedSlotIndex);
 	DOREPLIFETIME(AWorldItemActor, AssignedCodeNumber);
 }
+
+void AWorldItemActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(AWorldItemActor, ItemData);
+	DOREPLIFETIME(AWorldItemActor, Quantity);
+	DOREPLIFETIME(AWorldItemActor, AssignedSlotIndex);
+	DOREPLIFETIME(AWorldItemActor, AssignedCodeNumber);
+}

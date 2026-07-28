@@ -240,6 +240,21 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Aim|Crosshair", meta = (AllowPrivateAccess = "true"))
 	float CrosshairShootingFactor = 2.f;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Aim|Crosshair", Replicated, meta = (AllowPrivateAccess = "true"))
+	float CrosshairSpread = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Aim|Crosshair", meta = (AllowPrivateAccess = "true"))
+	float CrosshairSpreadMax = 16.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Aim|Crosshair", meta = (AllowPrivateAccess = "true"))
+	float CrosshairVelocityFactor = 2.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Aim|Crosshair", meta = (AllowPrivateAccess = "true"))
+	float CrosshairInAirFactor = 2.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Aim|Crosshair", meta = (AllowPrivateAccess = "true"))
+	float CrosshairShootingFactor = 2.f;
+
 	void UpdateCrosshairPosition(float DeltaTime); // 크로스헤어 위치 업데이트 함수
 	void UpdateCrosshairSpread(float DeltaTime); // 크로스헤어 확산 업데이트 함수
 

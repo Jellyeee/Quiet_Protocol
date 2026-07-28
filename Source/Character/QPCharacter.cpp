@@ -2371,3 +2371,233 @@ void AQPCharacter::OnRep_CollectedPassword()
 	}
 }
 
+void AQPCharacter::ServerSpawnAndEquipWeapon_Implementation(TSubclassOf<AWeaponBase> WeaponClass)
+{
+	if (!WeaponClass || !CombatComponent) return;
+
+	// 이미 무기를 장착 중이라면 먼저 해제
+	if (CombatComponent->HasWeapon()) 
+	{
+		CombatComponent->UnEquipWeapon(true); 
+	}
+
+	FActorSpawnParameters Params;
+	Params.Owner = this;
+	Params.Instigator = this;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	// 서버에서 무기 액터 스폰 (네트워크를 통해 모든 클라이언트에 복제됨)
+	AWeaponBase* NewWeapon = GetWorld()->SpawnActor<AWeaponBase>(WeaponClass, Params);
+	if (NewWeapon)
+	{
+		// 스폰된 무기를 컴뱃 컴포넌트에 장착
+		if (!CombatComponent->EquipWeapon(NewWeapon, false))
+		{
+			NewWeapon->Destroy(); // 장착 실패 시 액터 파괴
+		}
+	}
+}
+
+void AQPCharacter::ServerUpdateShield_Implementation(float Amount, FIntPoint ItemPos)
+{
+	if (StatusComponent)
+	{
+		StatusComponent->AddShield(Amount);
+	}
+
+	// [SERVER-SYNC] 서버 측 인벤토리에서도 아이템 제거
+	if (InventoryComponent && ItemPos.X != -1)
+	{
+		InventoryComponent->RemoveItemAt(ItemPos);
+	}
+}
+
+void AQPCharacter::ServerSpawnWorldItem_Implementation(UItemDataAsset* ItemData, int32 Quantity, FVector Location, int32 SlotIdx, int32 CodeNum)
+{
+	if (!ItemData) return;
+	
+	// 무기 타입인 경우 무기 액터로 스폰
+	if (ItemData->ItemType == EItemType::EIT_Weapon && ItemData->WeaponClass)
+	{
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+		SpawnParams.Owner = nullptr;
+		SpawnParams.Instigator = nullptr;
+
+		GetWorld()->SpawnActor<AWeaponBase>(ItemData->WeaponClass, Location, FRotator::ZeroRotator, SpawnParams);
+	}
+	else
+	{
+		// 일반 아이템인 경우 WorldItemActor로 스폰하여 데이터 설정
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+
+		AWorldItemActor* Dropped = GetWorld()->SpawnActor<AWorldItemActor>(AWorldItemActor::StaticClass(), Location, FRotator::ZeroRotator, SpawnParams);
+		if (Dropped)
+		{
+			Dropped->ItemData = ItemData;
+			Dropped->Quantity = Quantity;
+			// [Metadata Inheritance] 버릴 때도 키카드 메타데이터를 유지하여 생성
+			Dropped->AssignedSlotIndex = SlotIdx;
+			Dropped->AssignedCodeNumber = CodeNum;
+		}
+	}
+}
+
+void AQPCharacter::ServerTryDropEquipped_Implementation()
+{
+	TryDropEquipped();
+}
+
+void AQPCharacter::InteractPressed()
+{
+
+	TArray<AActor*> OverlappingActors;
+	GetOverlappingActors(OverlappingActors);
+
+	for (AActor* Actor : OverlappingActors)
+	{
+		// 1순위: 발전기 조작 (수리 시도)
+		if (AQPEscapeGenerator* Generator = Cast<AQPEscapeGenerator>(Actor))
+		{
+			CurrentRepairingGenerator = Generator;
+			
+			// [NETWORK-FIX] 클라이언트는 서버 신뢰를 위해 캐릭터 RPC를 통함
+			if (HasAuthority()) ServerInteract_Implementation(Generator);
+			else ServerInteract(Generator);
+
+			return; 
+		}
+		
+		// 2순위: 탈출문 키패드 조작
+		if (AQPEscapeDoor* Door = Cast<AQPEscapeDoor>(Actor))
+		{
+			if (HasAuthority()) ServerInteract_Implementation(Door);
+			else ServerInteract(Door);
+
+			ShowKeypadUI(Door);
+			return; 
+		}
+	}
+}
+
+void AQPCharacter::ServerInteract_Implementation(AActor* Target)
+{
+	if (!Target) return;
+
+	// 발전기 상호작용인 경우
+	if (AQPEscapeGenerator* Generator = Cast<AQPEscapeGenerator>(Target))
+	{
+		Generator->StartRepairing(this);
+	}
+	// 탈출문 상호작용인 경우 (필요 시 서버 측 처리 추가)
+	else if (AQPEscapeDoor* Door = Cast<AQPEscapeDoor>(Target))
+	{
+		// 서버 측 문 상호작용 로직 (현재는 UI만 띄우면 됨)
+	}
+}
+
+void AQPCharacter::InteractReleased()
+{
+	if (CurrentRepairingGenerator)
+	{
+		if (HasAuthority()) ServerStopInteract_Implementation(CurrentRepairingGenerator);
+		else ServerStopInteract(CurrentRepairingGenerator);
+
+		CurrentRepairingGenerator = nullptr;
+	}
+}
+
+void AQPCharacter::ServerStopInteract_Implementation(AActor* Target)
+{
+	if (!Target) return;
+
+	if (AQPEscapeGenerator* Generator = Cast<AQPEscapeGenerator>(Target))
+	{
+		Generator->StopRepairing(this);
+	}
+}
+
+void AQPCharacter::ShowStarCatchUI_Implementation(float StartRatio, float WidthRatio, float Duration)
+{
+	if (!StarCatchWidgetInstance && StarCatchWidgetClass)
+	{
+		StarCatchWidgetInstance = CreateWidget<UQPGeneratorWidget>(GetWorld(), StarCatchWidgetClass);
+		if (StarCatchWidgetInstance)
+		{
+			StarCatchWidgetInstance->AddToViewport();
+		}
+	}
+
+	if (StarCatchWidgetInstance)
+	{
+		StarCatchWidgetInstance->ShowSkillCheckPopup(StartRatio, WidthRatio, Duration);
+	}
+}
+
+void AQPCharacter::HideStarCatchUI_Implementation()
+{
+	if (StarCatchWidgetInstance)
+	{
+		StarCatchWidgetInstance->HideSkillCheckPopup();
+		StarCatchWidgetInstance->RemoveFromParent();
+		StarCatchWidgetInstance = nullptr;
+	}
+}
+
+void AQPCharacter::ShowKeypadUI(AQPEscapeDoor* Door)
+{
+	if (!IsLocallyControlled()) return;
+
+	if (!KeypadWidgetInstance && KeypadWidgetClass)
+	{
+		KeypadWidgetInstance = CreateWidget<UQPKeypadWidget>(GetWorld(), KeypadWidgetClass);
+	}
+
+	if (KeypadWidgetInstance)
+	{
+		KeypadWidgetInstance->SetTargetDoor(Door);
+		if (!KeypadWidgetInstance->IsInViewport())
+		{
+			KeypadWidgetInstance->AddToViewport();
+		}
+
+		// UI 진입 시 이동 키가 고장나는 현상 방지
+		if (APlayerController* PC = Cast<APlayerController>(GetController()))
+		{
+			PC->StopMovement();
+			PC->FlushPressedKeys();
+		}
+	}
+	else
+	{
+	}
+}
+
+void AQPCharacter::HideKeypadUI()
+{
+	if (!IsLocallyControlled()) return;
+
+	if (KeypadWidgetInstance && KeypadWidgetInstance->IsInViewport())
+	{
+		KeypadWidgetInstance->RemoveFromParent();
+		
+		if (APlayerController* PC = Cast<APlayerController>(GetController()))
+		{
+			FInputModeGameOnly InputMode;
+			PC->SetInputMode(InputMode);
+			PC->SetShowMouseCursor(false);
+		}
+	}
+}
+
+void AQPCharacter::OnRep_CollectedPassword()
+{
+	// 서버에서 배열이 변경되었을 때 로컬 UI도 즉시 업데이트 되도록 합니다.
+	if (InventoryComponent)
+	{
+		// 인벤토리 변경 이벤트를 수동으로 발생시켜 연동된 위젯(InventoryRootWidget 등)이 갱신되도록 합니다.
+		InventoryComponent->OnInventoryChanged.Broadcast();
+	}
+}
+
