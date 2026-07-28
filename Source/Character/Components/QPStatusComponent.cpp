@@ -150,6 +150,16 @@ void UQPStatusComponent::AddShield(float Amount)
 	}
 }
 
+void UQPStatusComponent::AddHealth(float Amount)
+{
+	if (bIsDead) return;
+	if (Character && Character->HasAuthority())
+	{
+		Health = FMath::Clamp(Health + Amount, 0.f, MaxHealth);
+		OnHealthChanged.Broadcast(Health / MaxHealth);
+	}
+}
+
 void UQPStatusComponent::Die()
 {
 	if (bIsDead) return;

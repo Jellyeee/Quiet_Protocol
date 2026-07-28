@@ -32,8 +32,7 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Inventory") //인벤토리 변경 델리게이트
 	FOnInventoryChanged OnInventoryChanged; //인벤토리 변경 델리게이트
 
-	UFUNCTION(BlueprintCallable, Category = "Inventory") //아이템 추가 함수
-	bool AddItem(UItemDataAsset* ItemData, int32 Quantity, int32 SlotIdx = -1, int32 CodeNum = -1); //아이템 추가 함수
+
 
 	UFUNCTION(BlueprintCallable, Category = "Inventory") //아이템 제거 함수
 	bool RemoveItemAt(const FIntPoint& Position); //특정 위치의 아이템 제거 함수
@@ -47,10 +46,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory") // 슬롯 찾기 함수
 	bool FindSlotAt(const FIntPoint& Position, FInventorySlot& OutSlot) const; //특정 위치의 슬롯 찾기 함수
 
-	UFUNCTION(BlueprintCallable, Category = "Inventory") //인벤토리 초기화 함수
-	bool FindSlotContaining(const FIntPoint& Cell, FInventorySlot& Outslot) const; //특정 셀을 포함하는 슬롯 찾기 함수
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
-	bool AddItemAt(UItemDataAsset* ItemData, int32 Quantity, const FIntPoint& Position, int32 SlotIdx = -1, int32 CodeNum = -1); //특정 위치에 아이템 추가 함수
+	bool FindSlotContaining(const FIntPoint& Cell, FInventorySlot& Outslot) const; 
+
+	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	bool AddItem(class UItemDataAsset* ItemData, int32 Quantity = 1, int32 SlotIdx = -1, int32 CodeNum = -1, int32 InCurrentAmmo = -1);
+	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	bool AddItemAt(class UItemDataAsset* ItemData, int32 Quantity, const FIntPoint& Position, int32 SlotIdx = -1, int32 CodeNum = -1, int32 InCurrentAmmo = -1); //특정 위치에 아이템 추가 함수
 
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Ammo")
 	int32 ConsumeAmmo(EQPWeaponType WeaponType, int32 AmountToConsume);

@@ -20,6 +20,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Keycard")
 	int32 AssignedCodeNumber = -1; // 해당 키카드의 비밀번호 숫자
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory|Weapon")
+	int32 CurrentAmmo = -1; // 총기의 남은 탄약 (-1이면 가득 찬 상태)
 };
 
 // FInventoryItem 구조체는 인벤토리 시스템에서 사용되는 아이템 정보를 담고 있다.

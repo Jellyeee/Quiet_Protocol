@@ -1,4 +1,5 @@
 #include "PJ_Quiet_Protocol/Environment/QPEscapeDoor.h"
+#include "PJ_Quiet_Protocol/Audio/QPAudioSubsystem.h"
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Net/UnrealNetwork.h"
@@ -24,6 +25,8 @@ AQPEscapeDoor::AQPEscapeDoor()
 
 	EscapeZoneVolume = CreateDefaultSubobject<UBoxComponent>(TEXT("EscapeZoneVolume"));
 	EscapeZoneVolume->SetupAttachment(RootComponent);
+	EscapeZoneVolume->SetCollisionProfileName(TEXT("OverlapAllDynamic"));
+	EscapeZoneVolume->SetGenerateOverlapEvents(true);
 	EscapeZoneVolume->SetCollisionEnabled(ECollisionEnabled::NoCollision); // 닫혀있을 땐 비활성
 
 	bIsRealExit = false;
@@ -65,6 +68,7 @@ void AQPEscapeDoor::Tick(float DeltaTime)
 			if (bIsRealExit && HasAuthority())
 			{
 				EscapeZoneVolume->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+				EscapeZoneVolume->UpdateOverlaps();
 			}
 		}
 
@@ -132,12 +136,20 @@ void AQPEscapeDoor::TriggerWrongPasswordAggro()
 
 void AQPEscapeDoor::MulticastTriggerWrongPasswordAggro_Implementation()
 {
-
-
-	// 오디오 뼈대 재생
+	// 오디오 재생 (SFX 볼륨 조절 동기화)
 	if (WrongPasswordSound)
 	{
-		UGameplayStatics::PlaySoundAtLocation(this, WrongPasswordSound, GetActorLocation());
+		if (UGameInstance* GI = GetGameInstance())
+		{
+			if (UQPAudioSubsystem* AudioSubsystem = GI->GetSubsystem<UQPAudioSubsystem>())
+			{
+				AudioSubsystem->PlaySoundAtLocation(WrongPasswordSound, GetActorLocation());
+			}
+			else
+			{
+				UGameplayStatics::PlaySoundAtLocation(this, WrongPasswordSound, GetActorLocation());
+			}
+		}
 	}
 
 	// 서버 권한인 경우 주변 AI(좀비)에게 거대한 소음을 전파
@@ -158,18 +170,31 @@ void AQPEscapeDoor::SpawnTrapZombie()
 		return;
 	}
 
-	// 성능 보호 (MaxGlobalZombies 초과 시 스폰 스킵)
+	// 성능 보호: 맵에 좀비가 너무 많다면, 문에서 가장 멀리 있는 좀비를 하나 파괴하고 스폰합니다.
 	TArray<AActor*> AllZombies;
 	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AZombieCharacter::StaticClass(), AllZombies);
 	if (AllZombies.Num() >= MaxGlobalZombies)
 	{
-		// 스폰 제한에 걸리면 타이머 종료 혹은 대기할 수 있으나, 현재는 그냥 이번 틱 스킵 후 종료
-		GetWorld()->GetTimerManager().ClearTimer(TrapTimerHandle);
-		return;
+		AActor* FurthestZombie = nullptr;
+		float MaxDistSq = 0.f;
+		for (AActor* Zombie : AllZombies)
+		{
+			float DistSq = FVector::DistSquared(Zombie->GetActorLocation(), GetActorLocation());
+			if (DistSq > MaxDistSq)
+			{
+				MaxDistSq = DistSq;
+				FurthestZombie = Zombie;
+			}
+		}
+
+		if (FurthestZombie)
+		{
+			FurthestZombie->Destroy();
+		}
 	}
 
-	// 문의 뒷쪽(-Forward)에 스폰
-	FVector SpawnLoc = GetActorLocation() + (GetActorForwardVector() * -200.f) + FVector(0.f, 0.f, 20.f);
+	// 문의 뒷쪽(-Forward)에 스폰 (바닥 파묻힘 방지 Z축 높이 +90.f)
+	FVector SpawnLoc = GetActorLocation() + (GetActorForwardVector() * -200.f) + FVector(0.f, 0.f, 90.f);
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 

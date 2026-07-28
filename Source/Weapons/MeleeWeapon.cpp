@@ -16,6 +16,29 @@ void AMeleeWeapon::StartFire_Implementation()
 	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
 	if (!OwnerCharacter) return;
 
+	// 클릭 즉시 피격 판정을 하지 않고, 스윙 모션이 적에게 닿는 시점(SwingHitDelay)에 히트 판정 수행
+	if (OwnerCharacter->HasAuthority())
+	{
+		GetWorld()->GetTimerManager().ClearTimer(MeleeHitTimerHandle);
+		GetWorld()->GetTimerManager().SetTimer(
+			MeleeHitTimerHandle,
+			this,
+			&AMeleeWeapon::ExecuteMeleeHit,
+			SwingHitDelay,
+			false
+		);
+	}
+}
+
+void AMeleeWeapon::ExecuteMeleeHit()
+{
+	GetWorld()->GetTimerManager().ClearTimer(MeleeHitTimerHandle);
+
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	if (!OwnerCharacter) return;
+
+	if (!OwnerCharacter->HasAuthority()) return;
+
 	// 공격 시작 지점 계산 (캐릭터 앞쪽 50.f 위치)
 	const FVector Start = OwnerCharacter->GetActorLocation() + OwnerCharacter->GetActorForwardVector() * 50.f;
 	// 공격 끝 지점 계산 (기본 범위만큼 앞쪽)

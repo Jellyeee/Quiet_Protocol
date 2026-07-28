@@ -20,7 +20,10 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Animation")
 	float Speed = 0.f; // 이동 속도
 	UPROPERTY(BlueprintReadOnly, Category = "Animation")
-	float Direction = 0.f; //이동 방향
+	float Direction = 0.f; // 이동 방향 (0 ~ 360)
+
+	UPROPERTY(BlueprintReadOnly, Category = "Animation")
+	float LocomotionDirection = 0.f; // 4방향 스냅된 애니메이션 방향 (0, 90, 180, 270)
 
 	UPROPERTY(BlueprintReadOnly, Category = "Animation")
 	bool bIsInAir = false; // 공중에 있는지 여부

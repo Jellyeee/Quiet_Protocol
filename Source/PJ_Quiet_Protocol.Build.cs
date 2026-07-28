@@ -8,7 +8,7 @@ public class PJ_Quiet_Protocol : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "OnlineSubsystem", "OnlineSubsystemSteam","Niagara", "NavigationSystem", "AIModule"
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "OnlineSubsystem", "OnlineSubsystemSteam", "OnlineSubsystemUtils", "Niagara", "NavigationSystem", "AIModule", "UMG", "Slate", "SlateCore"
         });
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });

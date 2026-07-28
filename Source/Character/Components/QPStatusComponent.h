@@ -28,6 +28,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Shield")
 	void AddShield(float Amount);
 
+	UFUNCTION(BlueprintCallable, Category = "Health")
+	void AddHealth(float Amount);
+
 	UFUNCTION(BlueprintPure, Category = "Health")
 	bool IsDead() const { return bIsDead; }
 
@@ -76,13 +79,13 @@ public:
 
 	// Stamina
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stamina")
-	float MaxStamina = 100.f; // 최대 스테미나
+	float MaxStamina = 200.f; // 최대 스테미나
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stamina", meta = (ToolTip = "달릴 때 초당 감소하는 스테미나 양"))
 	float StaminaDrainRate = 10.0f; 
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stamina", meta = (ToolTip = "달리지 않을 때 초당 회복하는 스테미나 양"))
-	float StaminaRegenRate = 15.0f;
+	float StaminaRegenRate = 30.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stamina", meta = (ToolTip = "달리기를 멈춘 후 회복이 시작될 때까지의 지연 시간(초)"))
 	float StaminaRegenDelay = 1.0f;

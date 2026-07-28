@@ -28,6 +28,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item", meta = (DisplayName = "Item Grid Size", ToolTip = "인벤토리 그리드 크기 조정"))
 	FIntPoint ItemSize;
 	
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Mesh", meta = (DisplayName = "Pickup Mesh", ToolTip = "바닥에 떨어졌을 때 보일 일반 아이템 메쉬"))
+	class UStaticMesh* PickupMesh;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Mesh", meta = (DisplayName = "Pickup Skeletal Mesh", ToolTip = "방어복 등 스켈레탈 메쉬를 사용하는 아이템을 위한 메쉬"))
+	class USkeletalMesh* PickupSkeletalMesh;
+	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Weapon", meta = (DisplayName = "Weapon"))
 	TSubclassOf<class AWeaponBase> WeaponClass;
 
@@ -36,4 +42,7 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Stats", meta = (DisplayName = "Shield Amount", ToolTip = "방어복 아이템일 경우 추가될 보호막 양"))
 	float ShieldAmount = 50.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item|Stats", meta = (DisplayName = "Heal Amount", ToolTip = "회복 아이템일 경우 추가될 체력 양"))
+	float HealAmount = 50.f;
 };

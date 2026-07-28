@@ -179,38 +179,32 @@ bool UInventoryGridWidget::HandleDropFromScreenPos(UDragDropOperation* Operation
 	if(DragOp->SourceInventory) // 소스 인벤토리가 유효한지 확인
 	{
 		if (DragOp->SourceInventory == Inventory) {
-			bResult = Inventory->MoveItem(DragOp->FromCell, ToCell); // 같은 인벤토리 내에서 이동
-
+			if (AQPCharacter* Char = Cast<AQPCharacter>(GetOwningPlayerPawn()))
+			{
+				Char->ServerMoveInventoryItem(DragOp->FromCell, ToCell);
+				bResult = true;
+			}
 		}
 		else {
-			if(Inventory->AddItemAt(DragOp->ItemData, DragOp->Quantity, ToCell)) // 다른 인벤토리에서 추가 시도
+			if (AQPCharacter* Char = Cast<AQPCharacter>(GetOwningPlayerPawn()))
 			{
-
-				bResult = DragOp->SourceInventory->RemoveItemAt(DragOp->FromCell); // 소스 인벤토리에서 제거
-				bResult = true; // 성공 플래그 설정
+				Char->ServerTransferInventoryItem(DragOp->SourceInventory, Inventory, DragOp->FromCell, ToCell);
+				bResult = true;
 			}
 		}
 	}
 	else if (DragOp->SourceWorldItemActor) {
-		if(Inventory->AddItemAt(DragOp->ItemData, DragOp->Quantity, ToCell)) // 월드 아이템에서 추가 시도
+		if (AQPCharacter* Char = Cast<AQPCharacter>(GetOwningPlayerPawn()))
 		{
-
-			if (AQPCharacter* Char = Cast<AQPCharacter>(GetOwningPlayerPawn()))
+			if (AWorldItemActor* WorldItem = Cast<AWorldItemActor>(DragOp->SourceWorldItemActor))
 			{
-				if (AWorldItemActor* WorldItem = Cast<AWorldItemActor>(DragOp->SourceWorldItemActor))
-				{
-					int32 FoundSlot = WorldItem->AssignedSlotIndex;
-					int32 FoundCode = WorldItem->AssignedCodeNumber;
-					Char->ServerDestroyPickupActor(WorldItem, FoundSlot, FoundCode);
-				}
-				else
-				{
-					Char->ServerDestroyPickupActor(DragOp->SourceWorldItemActor);
-				}
+				int32 FoundSlot = WorldItem->AssignedSlotIndex;
+				int32 FoundCode = WorldItem->AssignedCodeNumber;
+				Char->ServerDestroyPickupActor(WorldItem, FoundSlot, FoundCode, ToCell);
 			}
 			else
 			{
-				DragOp->SourceWorldItemActor->Destroy(); // 월드 아이템 액터 파괴 Fallback
+				Char->ServerDestroyPickupActor(DragOp->SourceWorldItemActor, -1, -1, ToCell);
 			}
 			bResult = true; // 성공 플래그 설정
 		}

@@ -15,7 +15,10 @@ public:
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item", Replicated)
+	UFUNCTION(BlueprintCallable, Category = "Item")
+	void UpdateItemMesh();
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item", ReplicatedUsing=OnRep_ItemData)
 	UItemDataAsset* ItemData; //아이템 정보
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item", Replicated)
 	int32 Quantity; //아이템 수량
@@ -40,7 +43,15 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void OnConstruction(const FTransform& Transform) override;
+
+	UFUNCTION()
+	void OnRep_ItemData();
+
 private:
 	UPROPERTY(EditAnywhere, Category = "Item")
-	TObjectPtr<class USkeletalMeshComponent> ItemMesh; //아이템 메쉬 컴포넌트
+	TObjectPtr<class UStaticMeshComponent> ItemMesh; //아이템 메쉬 컴포넌트
+
+	UPROPERTY(EditAnywhere, Category = "Item")
+	TObjectPtr<class USkeletalMeshComponent> ItemSkeletalMesh; //스켈레탈 아이템 메쉬 컴포넌트
 };

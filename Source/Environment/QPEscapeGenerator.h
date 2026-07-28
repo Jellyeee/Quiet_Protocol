@@ -107,8 +107,11 @@ private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Escape|Generator", meta = (AllowPrivateAccess = "true"))
 	float MaxProgress = 100.f;
 
-	UPROPERTY(Replicated, VisibleAnywhere, BlueprintReadOnly, Category = "Escape|Generator", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(ReplicatedUsing = OnRep_IsCompleted, VisibleAnywhere, BlueprintReadOnly, Category = "Escape|Generator", meta = (AllowPrivateAccess = "true"))
 	bool bIsCompleted;
+
+	UFUNCTION()
+	void OnRep_IsCompleted();
 
 	// 할당받은 키카드 정보
 	int32 AssignedSlotIndex;

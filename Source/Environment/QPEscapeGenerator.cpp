@@ -1,4 +1,5 @@
 #include "PJ_Quiet_Protocol/Environment/QPEscapeGenerator.h"
+#include "Kismet/GameplayStatics.h"
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/WidgetComponent.h"
@@ -97,6 +98,14 @@ void AQPEscapeGenerator::OnRep_IsBeingRepaired()
 	}
 
 	ProgressWidgetComp->SetVisibility(bIsBeingRepaired);
+}
+
+void AQPEscapeGenerator::OnRep_IsCompleted()
+{
+	if (bIsCompleted && ProgressWidgetComp)
+	{
+		ProgressWidgetComp->SetVisibility(false);
+	}
 }
 
 void AQPEscapeGenerator::StartRepairing(AQPCharacter* Character)
@@ -256,6 +265,22 @@ void AQPEscapeGenerator::CompleteRepair()
 	if (bIsCompleted) return;
 	bIsCompleted = true;
 
+	if (bIsSkillCheckActive)
+	{
+		bIsSkillCheckActive = false;
+	}
+
+	if (CurrentRepairer)
+	{
+		CurrentRepairer->HideStarCatchUI();
+	}
+
+	bIsBeingRepaired = false; // 서버 상태 정리
+	CurrentRepairer = nullptr; // 서버 상태 정리
+
+	// 타이머 정리
+	GetWorldTimerManager().ClearTimer(RepairTimerHandle);
+
 	// 아이템 드롭 로직 호출
 	DropRewards();
 
@@ -278,6 +303,19 @@ void AQPEscapeGenerator::CompleteRepair()
 void AQPEscapeGenerator::MulticastCompleteRepair_Implementation()
 {
 	// [Effect] 발전기 불 켜짐, 소리에펙트 등 시각적 처리 (모든 클라이언트)
+	if (ProgressWidgetComp)
+	{
+		ProgressWidgetComp->SetVisibility(false);
+	}
+
+	// 수리 완료 시 아무 키도 누르지 않았어도 화면에 미니게임 UI가 남지 않도록 100% 강제 닫기
+	if (APlayerController* PC = UGameplayStatics::GetPlayerController(GetWorld(), 0))
+	{
+		if (AQPCharacter* Character = Cast<AQPCharacter>(PC->GetPawn()))
+		{
+			Character->HideStarCatchUI();
+		}
+	}
 
 	if (GeneratorMesh)
 	{
@@ -321,7 +359,8 @@ void AQPEscapeGenerator::DropRewards()
 			DroppedItem->AssignedSlotIndex = TempSlotIndex;
 			DroppedItem->AssignedCodeNumber = TempCodeNumber;
 
-
+			// 데이터를 넣은 즉시 메쉬 업데이트 호출 (서버용)
+			DroppedItem->UpdateItemMesh();
 		}
 	}
 }

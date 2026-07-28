@@ -8,6 +8,7 @@
 class UBehaviorTree;
 class UAIPerceptionComponent;
 class UAISenseConfig_Hearing;
+class UAISenseConfig_Sight;
 
 /**
  *
@@ -33,4 +34,7 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Zombie AI|Perception")
 	UAISenseConfig_Hearing* HearingConfig;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Zombie AI|Perception")
+	UAISenseConfig_Sight* SightConfig;
 };

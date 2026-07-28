@@ -1,5 +1,6 @@
 
 #include "ZombieCharacter.h"
+#include "PJ_Quiet_Protocol/Audio/QPAudioSubsystem.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Animation/AnimInstance.h"
@@ -9,6 +10,8 @@
 #include "BrainComponent.h"
 #include "TimerManager.h"
 #include "Engine/World.h"
+#include "NiagaraFunctionLibrary.h"
+#include "Particles/ParticleSystem.h"
 //#include "PJ_Quiet_Protocol/Commons/DefineCommons.h"
 
 AZombieCharacter::AZombieCharacter()
@@ -24,6 +27,11 @@ AZombieCharacter::AZombieCharacter()
 	MoveComponent->bOrientRotationToMovement = true;
 	MoveComponent->RotationRate = FRotator(0.f, 150.f, 0.f);
 
+	// [Network] 네트워크 이동 보간 최적화 및 틱 레이트 조정
+	MoveComponent->NetworkSmoothingMode = ENetworkSmoothingMode::Exponential;
+
+	SetNetUpdateFrequency(66.f);
+	SetMinNetUpdateFrequency(33.f);
 }
 
 void AZombieCharacter::BeginPlay()
@@ -42,6 +50,48 @@ float AZombieCharacter::TakeDamage(float DamageAmount, FDamageEvent const& Damag
 {
 	float ActualDamage = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
 	if (bIsDead) return 0.f;
+
+	// --- 혈흔 이펙트 스폰 로직 ---
+	FVector HitLocation = GetActorLocation(); // 기본적으로 좀비의 현재 위치 사용
+	if (DamageEvent.IsOfType(FPointDamageEvent::ClassID)) // 총알 등 정확한 피격점이 있는 경우
+	{
+		const FPointDamageEvent* PointDamageEvent = (FPointDamageEvent*)&DamageEvent;
+		HitLocation = PointDamageEvent->HitInfo.ImpactPoint;
+	}
+	else if (DamageEvent.IsOfType(FRadialDamageEvent::ClassID)) // 폭발 등 범위 피해인 경우
+	{
+		const FRadialDamageEvent* RadialDamageEvent = (FRadialDamageEvent*)&DamageEvent;
+		HitLocation = RadialDamageEvent->Origin;
+	}
+
+	// --- 혈흔 이펙트 및 피격 사운드 재생 (플레이어/전투 공격에 의한 피해일 때만 재생: KillZ/지형 낙하사 예방) ---
+	if (DamageCauser || EventInstigator)
+	{
+		if (BloodEffectNiagara)
+		{
+			UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), BloodEffectNiagara, HitLocation, GetActorRotation());
+		}
+		else if (BloodEffectCascade)
+		{
+			UGameplayStatics::SpawnEmitterAtLocation(GetWorld(), BloodEffectCascade, HitLocation, GetActorRotation());
+		}
+
+		if (HitSound)
+		{
+			const float CurrentTime = GetWorld()->GetTimeSeconds();
+			if (CurrentTime - LastHitSoundTime >= 0.08f)
+			{
+				LastHitSoundTime = CurrentTime;
+				if (UGameInstance* GI = GetGameInstance())
+				{
+					if (UQPAudioSubsystem* AudioSubsystem = GI->GetSubsystem<UQPAudioSubsystem>())
+					{
+						AudioSubsystem->PlaySoundAtLocation(HitSound, HitLocation);
+					}
+				}
+			}
+		}
+	}
 
 	Health -= ActualDamage;
 	if (Health <= 0.f)
@@ -169,6 +219,17 @@ void AZombieCharacter::Die()
 
 void AZombieCharacter::MulticastDie_Implementation()
 {
+	if (DeathSound)
+	{
+		if (UGameInstance* GI = GetGameInstance())
+		{
+			if (UQPAudioSubsystem* AudioSubsystem = GI->GetSubsystem<UQPAudioSubsystem>())
+			{
+				AudioSubsystem->PlaySoundAtLocation(DeathSound, GetActorLocation());
+			}
+		}
+	}
+
 	// 1. AI 컨트롤러 중지 (비헤이비어 트리 끄기)
 	if (AAIController* AIController = Cast<AAIController>(GetController()))
 	{
@@ -193,7 +254,7 @@ void AZombieCharacter::MulticastDie_Implementation()
 		GetMesh()->SetCollisionResponseToChannel(ECollisionChannel::ECC_Visibility, ECollisionResponse::ECR_Ignore);
 	}
 
-	// 3. 사망 몽타주 재생
+	// 3. 사망 상태 및 래그돌 물리 적용
 	if (DeathMontage && GetMesh() && GetMesh()->GetAnimInstance())
 	{
 		float MontageDuration = GetMesh()->GetAnimInstance()->Montage_Play(DeathMontage);
@@ -210,6 +271,12 @@ void AZombieCharacter::MulticastDie_Implementation()
 				}
 			}), FMath::Max(0.1f, MontageDuration - 0.15f), false);
 		}
+	}
+	else if (GetMesh())
+	{
+		// 몽타주가 없으면 래그돌 모드로 전환하여 물리 동기화
+		GetMesh()->SetCollisionProfileName(TEXT("Ragdoll"));
+		GetMesh()->SetSimulatePhysics(true);
 	}
 	
 	// 4. 루트 모션이나 기타 이동 관련 초기화

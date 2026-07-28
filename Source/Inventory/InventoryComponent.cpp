@@ -20,7 +20,7 @@ void UInventoryComponent::OnRep_Slots()
 	OnInventoryChanged.Broadcast(); // 클라이언트에서 수신 시 UI 갱신
 }
 
-bool UInventoryComponent::AddItem(UItemDataAsset* ItemData, int32 Quantity, int32 SlotIdx, int32 CodeNum)
+bool UInventoryComponent::AddItem(UItemDataAsset* ItemData, int32 Quantity, int32 SlotIdx, int32 CodeNum, int32 InCurrentAmmo)
 {
 	if (!ItemData) return false;
 	if (Quantity <= 0) return false;
@@ -32,7 +32,7 @@ bool UInventoryComponent::AddItem(UItemDataAsset* ItemData, int32 Quantity, int3
 		{
 			const FIntPoint Position(x, y);
 			// 해당 위치에 아이템 추가 시도
-			if(AddItemAt(ItemData, Quantity, Position, SlotIdx, CodeNum))
+			if(AddItemAt(ItemData, Quantity, Position, SlotIdx, CodeNum, InCurrentAmmo))
 			{
 
 				return true;
@@ -41,7 +41,7 @@ bool UInventoryComponent::AddItem(UItemDataAsset* ItemData, int32 Quantity, int3
 	}
 	return false;
 }
-bool UInventoryComponent::AddItemAt(UItemDataAsset* ItemData, int32 Quantity, const FIntPoint& Position, int32 SlotIdx, int32 CodeNum)
+bool UInventoryComponent::AddItemAt(UItemDataAsset* ItemData, int32 Quantity, const FIntPoint& Position, int32 SlotIdx, int32 CodeNum, int32 InCurrentAmmo)
 {
 	if (!ItemData) return false;
 	if (Quantity <= 0) return false;
@@ -55,6 +55,7 @@ bool UInventoryComponent::AddItemAt(UItemDataAsset* ItemData, int32 Quantity, co
 	NewSlot.Item.Quantity = Quantity;
 	NewSlot.Item.AssignedSlotIndex = SlotIdx;
 	NewSlot.Item.AssignedCodeNumber = CodeNum;
+	NewSlot.Item.CurrentAmmo = InCurrentAmmo; // 탄약 추가
 	
 	Slots.Add(NewSlot); // 인벤토리 배열에 추가
 	OnInventoryChanged.Broadcast(); // 변경 사항 알림

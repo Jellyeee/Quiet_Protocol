@@ -37,6 +37,11 @@ void AQPPlayerController::BeginPlay()
 			SetLootListVisible(false);
 		}
 	}
+
+	// 로비 등 다른 맵에서 UI 전용 모드로 넘어왔을 경우를 대비해 인게임 모드로 강제 초기화
+	FInputModeGameOnly InputMode;
+	SetInputMode(InputMode);
+	SetShowMouseCursor(false);
 }
 
 void AQPPlayerController::SetupInputComponent()
@@ -45,6 +50,7 @@ void AQPPlayerController::SetupInputComponent()
 	check(InputComponent);
 	InputComponent->BindAction("ToggleInventory", IE_Pressed, this, &AQPPlayerController::ToggleInventory);
 	InputComponent->BindAction("ToggleLootInventory", IE_Pressed, this, &AQPPlayerController::ToggleLootInventory);
+	InputComponent->BindAction("TogglePauseMenu", IE_Pressed, this, &AQPPlayerController::TogglePauseMenu); // 일시정지 메뉴 매핑
 }
 
 void AQPPlayerController::SetPickupTarget(AActor* NewTarget)
@@ -75,6 +81,8 @@ void AQPPlayerController::ToggleInventory()
 
 void AQPPlayerController::ToggleLootInventory()
 {
+	if (bPauseMenuOpen) return; // 일시정지 메뉴가 열려있으면 인벤토리 토글 막기
+
 	if (bInventoryOpen) // 이미 열려있다면 닫기
 	{
 		bLootInventoryOpen = false; // 루팅 인벤토리 닫힘 상태 설정
@@ -326,10 +334,14 @@ void AQPPlayerController::ClearAllUI()
 {
 	if (!IsLocalController()) return;
 
-	// 1. 인벤토리 닫기
+	// 1. 인벤토리 및 일시정지 메뉴 닫기
 	if (bInventoryOpen)
 	{
 		SetInventoryOpen(false);
+	}
+	if (bPauseMenuOpen)
+	{
+		TogglePauseMenu();
 	}
 
 	// 2. 픽업 위젯 숨기기
@@ -353,6 +365,58 @@ void AQPPlayerController::ClearAllUI()
 	SetInputMode(InputMode);
 	SetShowMouseCursor(false);
 	FlushPressedKeys();
-	
+}
 
+void AQPPlayerController::TogglePauseMenu()
+{
+	if (!IsLocalPlayerController()) return;
+
+	// 메뉴를 열 때, 인벤토리가 열려있다면 먼저 닫기
+	if (!bPauseMenuOpen && bInventoryOpen)
+	{
+		SetInventoryOpen(false);
+	}
+
+	bPauseMenuOpen = !bPauseMenuOpen;
+
+	if (!PauseMenuWidget && PauseMenuWidgetClass)
+	{
+		PauseMenuWidget = CreateWidget<UUserWidget>(this, PauseMenuWidgetClass);
+		if (PauseMenuWidget)
+		{
+			PauseMenuWidget->AddToViewport(100); // 인벤토리보다 위에 보이도록 높은 ZOrder
+			PauseMenuWidget->SetVisibility(ESlateVisibility::Hidden);
+		}
+	}
+
+	if (!PauseMenuWidget) return;
+
+	if (bPauseMenuOpen)
+	{
+		PauseMenuWidget->SetVisibility(ESlateVisibility::Visible);
+		SetShowMouseCursor(true);
+		bEnableClickEvents = true;
+
+		SetIgnoreMoveInput(true);
+		SetIgnoreLookInput(true);
+
+		FInputModeGameAndUI InputMode;
+		InputMode.SetHideCursorDuringCapture(false);
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		InputMode.SetWidgetToFocus(PauseMenuWidget->TakeWidget());
+		SetInputMode(InputMode);
+	}
+	else
+	{
+		PauseMenuWidget->SetVisibility(ESlateVisibility::Hidden);
+		SetShowMouseCursor(false);
+		bEnableClickEvents = false;
+		bEnableMouseOverEvents = false;
+
+		SetIgnoreMoveInput(false);
+		SetIgnoreLookInput(false);
+
+		FInputModeGameOnly InputMode;
+		SetInputMode(InputMode);
+	}
 }

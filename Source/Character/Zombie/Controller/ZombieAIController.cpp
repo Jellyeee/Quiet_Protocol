@@ -3,12 +3,23 @@
 #include "BehaviorTree/BlackboardComponent.h"
 #include "Perception/AIPerceptionComponent.h"
 #include "Perception/AISenseConfig_Hearing.h"
+#include "Perception/AISenseConfig_Sight.h"
 
 AZombieAIController::AZombieAIController()
 {
 	// AI 퍼셉션 컴포넌트 생성
 	ZombiePerceptionComponent = CreateDefaultSubobject<UAIPerceptionComponent>(TEXT("ZombiePerceptionComponent"));
 	
+	// 시각 감지(Sight) 감각 설정 (시야각을 거의 없게 제한)
+	SightConfig = CreateDefaultSubobject<UAISenseConfig_Sight>(TEXT("SightConfig"));
+	SightConfig->SightRadius = 1000.0f; // 시야 거리
+	SightConfig->LoseSightRadius = 1200.0f; // 시야 상실 거리
+	SightConfig->PeripheralVisionAngleDegrees = 5.0f; // 시야각 5도 (거의 보이지 않음)
+	SightConfig->SetMaxAge(3.0f);
+	SightConfig->DetectionByAffiliation.bDetectEnemies = true;
+	SightConfig->DetectionByAffiliation.bDetectFriendlies = true;
+	SightConfig->DetectionByAffiliation.bDetectNeutrals = true;
+
 	// 청각 감지(Hearing) 감각 설정
 	HearingConfig = CreateDefaultSubobject<UAISenseConfig_Hearing>(TEXT("HearingConfig"));
 
@@ -17,7 +28,8 @@ AZombieAIController::AZombieAIController()
 	HearingConfig->DetectionByAffiliation.bDetectFriendlies = true; // 아군 감지 활성화
 	HearingConfig->DetectionByAffiliation.bDetectNeutrals = true; // 중립 감지 활성화
 
-	// 퍼셉션 컴포넌트에 청각 감각 등록
+	// 퍼셉션 컴포넌트에 감각 등록
+	ZombiePerceptionComponent->ConfigureSense(*SightConfig);
 	ZombiePerceptionComponent->ConfigureSense(*HearingConfig);
 	// 주 감각(Dominant Sense)으로 청각 설정
 	ZombiePerceptionComponent->SetDominantSense(HearingConfig->GetSenseImplementation());

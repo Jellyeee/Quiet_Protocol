@@ -1,4 +1,5 @@
 #include "PJ_Quiet_Protocol/Character/QPCharacter.h"
+#include "PJ_Quiet_Protocol/Audio/QPAudioSubsystem.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -7,6 +8,7 @@
 #include "PJ_Quiet_Protocol/Environment/QPEscapeGenerator.h"
 #include "PJ_Quiet_Protocol/Environment/QPEscapeDoor.h"
 #include "PJ_Quiet_Protocol/Weapons/WeaponBase.h"
+#include "PJ_Quiet_Protocol/Weapons/GunWeapon.h"
 #include "PJ_Quiet_Protocol/Character/Components/QPCombatComponent.h"
 #include "PJ_Quiet_Protocol/Character/Controllers/QPPlayerController.h" 
 #include "Components/CapsuleComponent.h"
@@ -17,6 +19,7 @@
 #include "PJ_Quiet_Protocol/Character/Components/QPStatusComponent.h"
 #include "PJ_Quiet_Protocol/GameMode/QPGameMode.h"
 #include "PJ_Quiet_Protocol/Inventory/InventoryComponent.h"
+#include "PJ_Quiet_Protocol/UserWidget/Crosshair/QPCrosshair.h"
 #include "PJ_Quiet_Protocol/Inventory/WorldItemActor.h"
 #include "PJ_Quiet_Protocol/Inventory/InventoryHeaders/InventoryItem.h"
 #include "Components/PawnNoiseEmitterComponent.h"
@@ -26,6 +29,9 @@
 #include "Kismet/GameplayStatics.h"
 #include "PJ_Quiet_Protocol/GameMode/QPEscapeGameState.h"
 #include "PJ_Quiet_Protocol/UI/QPKeypadWidget.h"
+#include "NiagaraFunctionLibrary.h"
+#include "Particles/ParticleSystem.h"
+#include "Engine/DamageEvents.h"
 
 AQPCharacter::AQPCharacter()
 {
@@ -47,6 +53,9 @@ AQPCharacter::AQPCharacter()
 		MoveComponent->MaxWalkSpeedCrouched = CrouchSpeed; 
 		MoveComponent->BrakingDecelerationWalking = 100.f; // 관성 있는 부드러운 멈춤을 위한 감속도 설정
 		MoveComponent->GroundFriction = 2.f; // 지면 마찰력을 낮춰 부드러운 움직임 유도
+
+		// [Network] 네트워크 이동 보간 최적화 (Jittering 방지)
+		MoveComponent->NetworkSmoothingMode = ENetworkSmoothingMode::Exponential;
 	}
 	//카메라 붐 설정
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom")); //스프링암 컴포넌트 생성
@@ -104,14 +113,15 @@ void AQPCharacter::QuickLootItem(AActor* TargetActor)
 			// [Server Authoritative] 클라이언트 측 추가 제거
 			if (HasAuthority())
 			{
-				InventoryComponent->AddItem(WeaponData, 1);
-				WeaponToLoot->Destroy();
+				if (InventoryComponent->AddItem(WeaponData, 1))
+				{
+					WeaponToLoot->Destroy();
+				}
 			}
 			else
 			{
 				ServerDestroyPickupActor(WeaponToLoot);
 			}
-			RefreshPickupCandidate(WeaponToLoot);
 		}
 	}
 	else if (AWorldItemActor* ItemToLoot = Cast<AWorldItemActor>(TargetActor))
@@ -148,7 +158,6 @@ void AQPCharacter::QuickLootItem(AActor* TargetActor)
 			{
 				// [Server Authoritative] 클라이언트에서는 추가하지 않고 서버 RPC만 호출하여 중복 추가 방지
 				ServerDestroyPickupActor(ItemToLoot, FoundSlot, FoundCode);
-				RefreshPickupCandidate(ItemToLoot);
 			}
 		}
 	}
@@ -182,38 +191,86 @@ void AQPCharacter::EquipInventoryItemAt(const FIntPoint& Cell)
 		return;
 	}
 
-	// 2. 무기 아이템만 장착 처리
-	if (Data->ItemType != EItemType::EIT_Weapon || !Data->WeaponClass) return;
-
-	if (HasAuthority())
+	// 2. 체력 회복 아이템 처리
+	if (ItemNameStr.Contains(TEXT("회복")) || ItemNameStr.Contains(TEXT("Heal")) || ItemNameStr.Contains(TEXT("구급상자")) || ItemNameStr.Contains(TEXT("Medikit")))
 	{
-		if (CombatComponent->HasWeapon())
+		if (HasAuthority())
 		{
-			CombatComponent->UnEquipWeapon(true);
-		}
-
-		FActorSpawnParameters Params;
-		Params.Owner = this;
-		Params.Instigator = this;
-		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-		AWeaponBase* NewWeapon = GetWorld()->SpawnActor<AWeaponBase>(Data->WeaponClass, Params);
-		if (!NewWeapon) return;
-
-		if (CombatComponent->EquipWeapon(NewWeapon, false))
-		{
+			StatusComponent->AddHealth(Data->HealAmount);
 			InventoryComponent->RemoveItemAt(Slot.Position);
 		}
 		else
 		{
-			NewWeapon->Destroy();
+			ServerUpdateHealth(Data->HealAmount, Slot.Position); 
 		}
+		return;
+	}
+
+	// 3. 무기 아이템만 장착 처리
+	if (Data->ItemType != EItemType::EIT_Weapon)
+	{
+		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("[경고] 이 아이템의 Data Asset에서 ItemType이 Weapon이 아닙니다!"));
+		return;
+	}
+	
+	if (!Data->WeaponClass)
+	{
+		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("[경고] 이 아이템의 Data Asset에서 'Weapon Class' 항목이 비어있습니다! BP_Shotgun 등을 할당하세요!"));
+		return;
+	}
+
+	if (!HasAuthority())
+	{
+		// [Network Fix] 클라이언트는 직접 인벤토리 아이템을 지우지 않고 서버 RPC를 호출하여
+		// 서버에서 슬롯 아이템 제거 및 무기 스폰/장착이 동기화되도록 함 (아이템 복사 버그 방지)
+		ServerEquipInventoryItem(Cell);
+		return;
+	}
+
+	if (AWeaponBase* CurWeapon = CombatComponent->GetEquippedWeapon())
+	{
+		int32 AmmoToSave = -1;
+		if (AGunWeapon* Gun = Cast<AGunWeapon>(CurWeapon))
+		{
+			AmmoToSave = Gun->GetCurrentAmmo();
+		}
+		if (CurWeapon->GetWeaponItemData())
+		{
+			InventoryComponent->AddItem(CurWeapon->GetWeaponItemData(), 1, -1, -1, AmmoToSave);
+		}
+		CombatComponent->UnEquipWeapon(true);
+		CurWeapon->Destroy(); // 월드에서 완전히 삭제하고 인벤에 넣음
+	}
+
+	FActorSpawnParameters Params;
+	Params.Owner = this;
+	Params.Instigator = this;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	AWeaponBase* NewWeapon = GetWorld()->SpawnActor<AWeaponBase>(Data->WeaponClass, Params);
+	if (!NewWeapon) return;
+	
+	if (AGunWeapon* GunWeapon = Cast<AGunWeapon>(NewWeapon))
+	{
+		if (Slot.Item.CurrentAmmo != -1)
+		{
+			GunWeapon->SetCurrentAmmo(Slot.Item.CurrentAmmo);
+		}
+	}
+
+	if (CombatComponent->EquipWeapon(NewWeapon, false))
+	{
+		InventoryComponent->RemoveItemAt(Slot.Position);
 	}
 	else
 	{
-		InventoryComponent->RemoveItemAt(Slot.Position);
-		ServerSpawnAndEquipWeapon(Data->WeaponClass);
+		NewWeapon->Destroy();
 	}
+}
+
+void AQPCharacter::ServerEquipInventoryItem_Implementation(FIntPoint ItemPos)
+{
+	EquipInventoryItemAt(ItemPos);
 }
 
 void AQPCharacter::DropInventoryItemAt(const FIntPoint& Cell)
@@ -261,16 +318,12 @@ void AQPCharacter::DropInventoryItemAt(const FIntPoint& Cell)
 
 	if (HasAuthority())
 	{
-		// 서버에서 직접 생성 (메타데이터 포함)
-		ServerSpawnWorldItem_Implementation(ItemData, Quantity, DropLoc, Slot.Item.AssignedSlotIndex, Slot.Item.AssignedCodeNumber);
+		ServerDropItem_Implementation(Cell, DropLoc);
 	}
 	else
 	{
-		// RPC 호출 (메타데이터 포함)
-		ServerSpawnWorldItem(ItemData, Quantity, DropLoc, Slot.Item.AssignedSlotIndex, Slot.Item.AssignedCodeNumber);
+		ServerDropItem(Cell, DropLoc);
 	}
-
-	InventoryComponent->RemoveItemAt(Slot.Position); //인벤토리에서 아이템 제거
 }
 
 void AQPCharacter::BeginPlay()
@@ -595,6 +648,9 @@ void AQPCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	PlayerInputComponent->BindAction(TEXT("EquipSlot3"), IE_Pressed, this, &AQPCharacter::EquipSlot3);
 	PlayerInputComponent->BindAction(TEXT("EquipSlot4"), IE_Pressed, this, &AQPCharacter::EquipSlot4);
 	PlayerInputComponent->BindAction(TEXT("EquipSlot5"), IE_Pressed, this, &AQPCharacter::EquipSlot5);
+	
+	// Holster Weapon (X)
+	PlayerInputComponent->BindAction(TEXT("Holster"), IE_Pressed, this, &AQPCharacter::HolsterWeapon);
 }
 void AQPCharacter::SetOverlappingWeapon(AWeaponBase* Weapon)
 {
@@ -931,7 +987,7 @@ void AQPCharacter::EquipSlot2() { EquipWeaponByType(EQPWeaponType::EWT_Shotgun);
 void AQPCharacter::EquipSlot3() { EquipWeaponByType(EQPWeaponType::EWT_Handgun); }
 void AQPCharacter::EquipSlot4() { EquipWeaponByType(EQPWeaponType::EWT_Melee); }
 void AQPCharacter::EquipSlot5() { EquipWeaponByType(EQPWeaponType::EWT_None); }
-
+void AQPCharacter::HolsterWeapon() { EquipWeaponByType(EQPWeaponType::EWT_None); }
 
 void AQPCharacter::EquipWeaponByType(EQPWeaponType TargetType)
 {
@@ -948,13 +1004,25 @@ void AQPCharacter::EquipWeaponByType(EQPWeaponType TargetType)
 		{
 			UItemDataAsset* CurWeaponData = CurWeapon->GetWeaponItemData();
 			bool bStored = false;
+			int32 AmmoToSave = -1;
+			if (AGunWeapon* Gun = Cast<AGunWeapon>(CurWeapon))
+			{
+				AmmoToSave = Gun->GetCurrentAmmo();
+			}
 			if (CurWeaponData)
 			{
-				bStored = InventoryComponent->AddItem(CurWeaponData, 1);
+				if (!HasAuthority())
+				{
+					bStored = InventoryComponent->AddItem(CurWeaponData, 1, -1, -1, AmmoToSave);
+				}
+				else
+				{
+					bStored = true; // 서버(호스트)는 실제 스왑 함수에서 처리함
+				}
 			}
 
-			if (HasAuthority()) ServerSwapWeapon_Implementation(nullptr, !bStored, FIntPoint(-1, -1));
-			else ServerSwapWeapon(nullptr, !bStored, FIntPoint(-1, -1));
+			if (HasAuthority()) ServerSwapWeapon_Implementation(nullptr, !bStored, FIntPoint(-1, -1), -1);
+			else ServerSwapWeapon(nullptr, !bStored, FIntPoint(-1, -1), -1);
 		}
 		return;
 	}
@@ -967,19 +1035,33 @@ void AQPCharacter::EquipWeaponByType(EQPWeaponType TargetType)
 	{
 		if (Slot.Item.ItemData && Slot.Item.ItemData->ItemType == EItemType::EIT_Weapon && Slot.Item.ItemData->WeaponClass)
 		{
-			if (AWeaponBase* CDO = Slot.Item.ItemData->WeaponClass->GetDefaultObject<AWeaponBase>())
+			bool bMatch = false;
+			if (Slot.Item.ItemData->TargetWeaponType == TargetType)
+			{
+				bMatch = true;
+			}
+			else if (AWeaponBase* CDO = Slot.Item.ItemData->WeaponClass->GetDefaultObject<AWeaponBase>())
 			{
 				if (CDO->GetWeaponType() == TargetType)
 				{
-					TargetCell = Slot.Position;
-					bFound = true;
-					break;
+					bMatch = true;
 				}
+			}
+
+			if (bMatch)
+			{
+				TargetCell = Slot.Position;
+				bFound = true;
+				break;
 			}
 		}
 	}
 
-	if (!bFound) return;
+	if (!bFound)
+	{
+		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, FString::Printf(TEXT("[경고] 인벤토리에서 해당 무기 타입(%d)을 찾지 못했습니다! Data Asset의 TargetWeaponType을 확인하세요."), (int32)TargetType));
+		return;
+	}
 
 	FInventorySlot TargetSlot;
 	if (!InventoryComponent->FindSlotContaining(TargetCell, TargetSlot)) return;
@@ -990,27 +1072,34 @@ void AQPCharacter::EquipWeaponByType(EQPWeaponType TargetType)
 	{
 		UItemDataAsset* CurWeaponData = CurWeapon->GetWeaponItemData();
 		
-		// [SERVER-SYNC] 인벤토리 제거는 이제 ServerSwapWeapon_Implementation 내부에서 수행합니다.
-		bool bStored = false;
-		if (CurWeaponData)
+		int32 AmmoToSave = -1;
+		if (AGunWeapon* Gun = Cast<AGunWeapon>(CurWeapon))
 		{
-			// 클라이언트 로컬 인벤토리에 먼저 공간을 확보하고 넣으려 시도 (예측적 반영)
-			// 실제 동기화 및 제거는 서버에서 수행됨
-			bStored = InventoryComponent->AddItem(CurWeaponData, 1);
+			AmmoToSave = Gun->GetCurrentAmmo();
 		}
 
-		if (HasAuthority()) ServerSwapWeapon_Implementation(TargetWeaponClass, !bStored, TargetCell);
-		else ServerSwapWeapon(TargetWeaponClass, !bStored, TargetCell);
+		// [SERVER-SYNC] 인벤토리 제거는 이제 ServerSwapWeapon_Implementation 내부에서 수행합니다.
+		bool bStored = true;
+		if (CurWeaponData)
+		{
+			if (!HasAuthority())
+			{
+				bStored = InventoryComponent->AddItem(CurWeaponData, 1, -1, -1, AmmoToSave);
+			}
+		}
+
+		if (HasAuthority()) ServerSwapWeapon_Implementation(TargetWeaponClass, !bStored, TargetCell, TargetSlot.Item.CurrentAmmo);
+		else ServerSwapWeapon(TargetWeaponClass, !bStored, TargetCell, TargetSlot.Item.CurrentAmmo);
 	}
 	else
 	{
 		// 맨손 상태에서 새 무기 꺼내기
-		if (HasAuthority()) ServerSwapWeapon_Implementation(TargetWeaponClass, false, TargetCell);
-		else ServerSwapWeapon(TargetWeaponClass, false, TargetCell);
+		if (HasAuthority()) ServerSwapWeapon_Implementation(TargetWeaponClass, false, TargetCell, TargetSlot.Item.CurrentAmmo);
+		else ServerSwapWeapon(TargetWeaponClass, false, TargetCell, TargetSlot.Item.CurrentAmmo);
 	}
 }
 
-void AQPCharacter::ServerSwapWeapon_Implementation(TSubclassOf<AWeaponBase> NewWeaponClass, bool bDropCurrent, FIntPoint TargetCell)
+void AQPCharacter::ServerSwapWeapon_Implementation(TSubclassOf<AWeaponBase> NewWeaponClass, bool bDropCurrent, FIntPoint TargetCell, int32 AmmoToLoad)
 {
 	if (!CombatComponent || !InventoryComponent) return;
 
@@ -1023,14 +1112,34 @@ void AQPCharacter::ServerSwapWeapon_Implementation(TSubclassOf<AWeaponBase> NewW
 	// 기존 장착 무기 제거
 	if (AWeaponBase* CurWeapon = CombatComponent->GetEquippedWeapon())
 	{
+		int32 AmmoToSave = -1;
+		if (AGunWeapon* Gun = Cast<AGunWeapon>(CurWeapon))
+		{
+			AmmoToSave = Gun->GetCurrentAmmo();
+		}
+
 		if (bDropCurrent)
 		{
 			CombatComponent->UnEquipWeapon(true); // 바닥에 버림
 		}
 		else
 		{
-			CombatComponent->UnEquipWeapon(false); // 손에서 없애기만 함 (클라이언트 인벤에 들어갔으므로)
-			CurWeapon->Destroy(); // 월드에서 완전히 삭제
+			// 서버 인벤토리에도 기존 무기를 추가해야 함
+			bool bSuccessfullyStored = false;
+			if (CurWeapon->GetWeaponItemData())
+			{
+				bSuccessfullyStored = InventoryComponent->AddItem(CurWeapon->GetWeaponItemData(), 1, -1, -1, AmmoToSave);
+			}
+			
+			if (bSuccessfullyStored)
+			{
+				CombatComponent->UnEquipWeapon(false); // 손에서 없애기만 함 (클라이언트 인벤에 들어갔으므로)
+				CurWeapon->Destroy(); // 월드에서 완전히 삭제
+			}
+			else
+			{
+				CombatComponent->UnEquipWeapon(true); // 공간 부족 시 바닥에 버림
+			}
 		}
 	}
 
@@ -1045,6 +1154,19 @@ void AQPCharacter::ServerSwapWeapon_Implementation(TSubclassOf<AWeaponBase> NewW
 		AWeaponBase* NewWeapon = GetWorld()->SpawnActor<AWeaponBase>(NewWeaponClass, Params);
 		if (NewWeapon)
 		{
+			// 만약 장착하려는 무기가 총기고, 저장된 탄약 데이터가 있다면 적용
+			if (AGunWeapon* GunWeapon = Cast<AGunWeapon>(NewWeapon))
+			{
+				if (AmmoToLoad != -1)
+				{
+					// AddAmmo 대신 덮어씌워야 하므로 바로 대입하거나 Clear 후 Add
+					// GunWeapon의 CurrentAmmo를 조작하기 위해 함수를 추가하거나 리셋 후 계산
+					// 하지만 AddAmmo는 Max 제한을 받으므로 괜찮지만, 기존에 가득 차 있을 수도 있음.
+					// GunWeapon.cpp에 SetCurrentAmmo가 없으니 AddAmmo 음수 양수를 이용해 맞춤
+					int32 Diff = AmmoToLoad - GunWeapon->GetCurrentAmmo();
+					GunWeapon->AddAmmo(Diff);
+				}
+			}
 			CombatComponent->EquipWeapon(NewWeapon, false);
 		}
 	}
@@ -1168,17 +1290,14 @@ void AQPCharacter::TryDropEquipped()
 	AWeaponBase* WeaponToDrop = CombatComponent->GetEquippedWeapon();
 	if (!WeaponToDrop) return;
 
-	CombatComponent->UnEquipWeapon(false); // 드랍 (인벤토리에 넣는 게 아니므로 false)
+	CombatComponent->UnEquipWeapon(true); // true로 변경하여 Multicast로 처리되도록 함
 
-	// 물리 활성화 및 분리
-	WeaponToDrop->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
 	WeaponToDrop->SetOwner(nullptr);
 
 	if (UPrimitiveComponent* RootPrim = Cast<UPrimitiveComponent>(WeaponToDrop->GetRootComponent()))
 	{
-		RootPrim->SetSimulatePhysics(true);
-		RootPrim->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-		RootPrim->AddImpulse(GetActorForwardVector() * 300.f + GetActorUpVector() * 200.f, NAME_None, true);
+		// 앞으로 살짝, 위로 아주 살짝만 던지도록 힘을 크게 줄임
+		RootPrim->AddImpulse(GetActorForwardVector() * 50.f + GetActorUpVector() * 20.f, NAME_None, true);
 	}
 }
 
@@ -1219,8 +1338,10 @@ void AQPCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLife
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(AQPCharacter, OverlappingWeapon);
+	DOREPLIFETIME(AQPCharacter, OverlappingWorldItem);
 	DOREPLIFETIME(AQPCharacter, bWantsToSprint);
 	DOREPLIFETIME(AQPCharacter, bIsTurningInPlace);
+	DOREPLIFETIME(AQPCharacter, AO_Yaw);
 	DOREPLIFETIME(AQPCharacter, NetAimYaw);
 	DOREPLIFETIME(AQPCharacter, CollectedPassword);
 }
@@ -1343,7 +1464,7 @@ void AQPCharacter::AimOffset(float DeltaTime)
 			const FRotator TargetRotation = FRotator(0.f, AimYaw, 0.f); // 이동 중에는 항상 AimYaw를 향하도록 회전 (달리기 중에도 적용)
 			
 
-			if (GetLocalRole() != ROLE_SimulatedProxy)  // Simulated Proxy는 제자리 회전 로직에서 제외 (회전 애니메이션이 어색하게 보이는 것을 방지)
+			if (HasAuthority() || IsLocallyControlled())
 			{
 				if (!bUseControllerRotationYaw) // Controller Rotation이 비활성화된 경우에만 회전 로직 적용 (달리기 중에는 Controller Rotation이 활성화되어 있으므로 회전 로직 적용 제외)
 				{
@@ -1406,7 +1527,7 @@ void AQPCharacter::AimOffset(float DeltaTime)
 					InterpSpeed = FMath::GetMappedRangeValueClamped(FVector2D(0.f, 60.f), FVector2D(10.f, 20.f), DeltaYawAbs); // 0도에 가까울수록 20.f에 가깝게, 60도에 가까울수록 10.f에 가깝게 (잔여 회전이 적을수록 더 빠르게)
 				}
 
-				if (GetLocalRole() != ROLE_SimulatedProxy) // Simulated Proxy는 제자리 회전 로직에서 제외 (회전 애니메이션이 어색하게 보이는 것을 방지)
+				if (HasAuthority() || IsLocallyControlled())
 				{
 					if (DeltaYawAbs < 2.f) // 2도 미만으로 줄어들면 회전을 강제로 맞춰서 제자리 회전 종료 (잔여 회전이 거의 없을 때는 부드러운 종료를 위해 강제 맞춤)
 					{
@@ -1489,6 +1610,15 @@ void AQPCharacter::PlayReloadMontage() //재장전 몽타주 재생 함수
 {
 	if (!CombatComponent || !ReloadMontage) return; //전투 컴포넌트나 재장전 몽타주가 없으면 함수 종료
 
+	// [Fix] 재장전 사운드 노티파이 재생 직전 메모리에 로드된 SC_SFX 사운드 클래스 볼륨 강제 적용
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		if (UQPAudioSubsystem* AudioSubsystem = GI->GetSubsystem<UQPAudioSubsystem>())
+		{
+			AudioSubsystem->EnsureSoundClassVolumesApplied();
+		}
+	}
+
 	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
 	if (AnimInstance && ReloadMontage) 
 	{
@@ -1527,7 +1657,48 @@ float AQPCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEve
 {
 	float DamageApplied = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
 
-	if (IsDead()) return DamageApplied; // 이미 죽었다면 데미지 무시
+	if (IsDead()) return DamageApplied; // 이미 죽었다면 무시
+
+	// --- 혈흔 이펙트 스폰 로직 ---
+	FVector HitLocation = GetActorLocation(); // 기본적으로 액터 위치
+	if (DamageEvent.IsOfType(FPointDamageEvent::ClassID))
+	{
+		const FPointDamageEvent* PointDamageEvent = (FPointDamageEvent*)&DamageEvent;
+		HitLocation = PointDamageEvent->HitInfo.ImpactPoint;
+	}
+	else if (DamageEvent.IsOfType(FRadialDamageEvent::ClassID))
+	{
+		const FRadialDamageEvent* RadialDamageEvent = (FRadialDamageEvent*)&DamageEvent;
+		HitLocation = RadialDamageEvent->Origin;
+	}
+
+	if (BloodEffectNiagara)
+	{
+		// bAutoDestroy 매개변수는 기본값이 true이므로 이펙트 재생이 끝나면 자동으로 컴포넌트가 파괴(사라짐)됩니다.
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), BloodEffectNiagara, HitLocation, GetActorRotation());
+	}
+	else if (BloodEffectCascade)
+	{
+		UGameplayStatics::SpawnEmitterAtLocation(GetWorld(), BloodEffectCascade, HitLocation, GetActorRotation());
+	}
+	// -----------------------------
+
+	// --- 피격 사운드 재생 로직 (샷건 다중 페렛 소리 겹침 방지: 0.08초 쿨다운) ---
+	if (HitSound)
+	{
+		const float CurrentTime = GetWorld()->GetTimeSeconds();
+		if (CurrentTime - LastHitSoundTime >= 0.08f)
+		{
+			LastHitSoundTime = CurrentTime;
+			if (UGameInstance* GI = GetGameInstance())
+			{
+				if (UQPAudioSubsystem* AudioSubsystem = GI->GetSubsystem<UQPAudioSubsystem>())
+				{
+					AudioSubsystem->PlaySoundAtLocation(HitSound, HitLocation);
+				}
+			}
+		}
+	}
 
 	if (StatusComponent)
 	{
@@ -1559,7 +1730,7 @@ void AQPCharacter::Die()
 				// 현재 위치 주변에 뿌리기
 				FVector DropLoc = GetActorLocation() + FVector(FMath::RandRange(-80.f, 80.f), FMath::RandRange(-80.f, 80.f), FMath::RandRange(20.f, 60.f));
 				
-				ServerSpawnWorldItem_Implementation(Slot.Item.ItemData, Slot.Item.Quantity, DropLoc, Slot.Item.AssignedSlotIndex, Slot.Item.AssignedCodeNumber);
+				ServerSpawnWorldItem_Implementation(Slot.Item.ItemData, Slot.Item.Quantity, DropLoc, Slot.Item.AssignedSlotIndex, Slot.Item.AssignedCodeNumber, Slot.Item.CurrentAmmo);
 			}
 		}
 		InventoryComponent->Slots.Empty(); // 클라이언트 동기화를 위해 비움
@@ -1670,6 +1841,17 @@ void AQPCharacter::MulticastDie_Implementation()
 	 * 모든 클라이언트에서 공통적으로 실행되는 사망 시각적 연출 로직입니다.
 	 */
 
+	if (DeathSound)
+	{
+		if (UGameInstance* GI = GetGameInstance())
+		{
+			if (UQPAudioSubsystem* AudioSubsystem = GI->GetSubsystem<UQPAudioSubsystem>())
+			{
+				AudioSubsystem->PlaySoundAtLocation(DeathSound, GetActorLocation());
+			}
+		}
+	}
+
 	// 1. 진행 중인 공격 동작 즉시 중단
 	if (CombatComponent)
 	{
@@ -1747,7 +1929,19 @@ void AQPCharacter::ServerEquipOverlappingWeapon_Implementation(AWeaponBase* Weap
 	}
 }
 
-void AQPCharacter::ServerDestroyPickupActor_Implementation(AActor* PickupActor, int32 SlotIdx, int32 CodeNum)
+void AQPCharacter::ServerUpdateHealth_Implementation(float HealAmount, FIntPoint TargetCell)
+{
+	if (StatusComponent)
+	{
+		StatusComponent->AddHealth(HealAmount);
+	}
+	if (InventoryComponent)
+	{
+		InventoryComponent->RemoveItemAt(TargetCell);
+	}
+}
+
+void AQPCharacter::ServerDestroyPickupActor_Implementation(AActor* PickupActor, int32 SlotIdx, int32 CodeNum, FIntPoint TargetCell)
 {
 	if (PickupActor)
 	{
@@ -1808,12 +2002,13 @@ void AQPCharacter::ServerDestroyPickupActor_Implementation(AActor* PickupActor, 
 			bool bAdded = false;
 			if (ItemData)
 			{
-				bAdded = InventoryComponent->AddItem(ItemData, Quantity, SlotIdx, CodeNum);
-				if (bAdded)
+				if (TargetCell.X >= 0 && TargetCell.Y >= 0)
 				{
+					bAdded = InventoryComponent->AddItemAt(ItemData, Quantity, TargetCell, SlotIdx, CodeNum);
 				}
 				else
 				{
+					bAdded = InventoryComponent->AddItem(ItemData, Quantity, SlotIdx, CodeNum);
 				}
 			}
 
@@ -1826,7 +2021,355 @@ void AQPCharacter::ServerDestroyPickupActor_Implementation(AActor* PickupActor, 
 	}
 }
 
+void AQPCharacter::ServerMoveInventoryItem_Implementation(FIntPoint FromCell, FIntPoint ToCell)
+{
+	if (InventoryComponent)
+	{
+		InventoryComponent->MoveItem(FromCell, ToCell);
+	}
+}
 
+void AQPCharacter::ServerSpawnAndEquipWeapon_Implementation(TSubclassOf<AWeaponBase> WeaponClass)
+{
+	if (!WeaponClass || !CombatComponent) return;
+
+	// 이미 무기를 장착 중이라면 먼저 해제
+	if (CombatComponent->HasWeapon()) 
+	{
+		CombatComponent->UnEquipWeapon(true); 
+	}
+
+	FActorSpawnParameters Params;
+	Params.Owner = this;
+	Params.Instigator = this;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	// 서버에서 무기 액터 스폰 (네트워크를 통해 모든 클라이언트에 복제됨)
+	AWeaponBase* NewWeapon = GetWorld()->SpawnActor<AWeaponBase>(WeaponClass, Params);
+	if (NewWeapon)
+	{
+		// 스폰된 무기를 컴뱃 컴포넌트에 장착
+		if (!CombatComponent->EquipWeapon(NewWeapon, false))
+		{
+			NewWeapon->Destroy(); // 장착 실패 시 액터 파괴
+		}
+	}
+}
+
+void AQPCharacter::ServerUpdateShield_Implementation(float Amount, FIntPoint ItemPos)
+{
+	if (StatusComponent)
+	{
+		StatusComponent->AddShield(Amount);
+	}
+
+	// [SERVER-SYNC] 서버 측 인벤토리에서도 아이템 제거
+	if (InventoryComponent && ItemPos.X != -1)
+	{
+		InventoryComponent->RemoveItemAt(ItemPos);
+	}
+}
+
+void AQPCharacter::ServerSpawnWorldItem_Implementation(UItemDataAsset* ItemData, int32 Quantity, FVector Location, int32 SlotIdx, int32 CodeNum, int32 Ammo)
+{
+	if (!ItemData) return;
+	
+	// 무기 타입인 경우 무기 액터로 스폰
+	if (ItemData->ItemType == EItemType::EIT_Weapon && ItemData->WeaponClass)
+	{
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+		SpawnParams.Owner = nullptr;
+		SpawnParams.Instigator = nullptr;
+
+		AWeaponBase* SpawnedWeapon = GetWorld()->SpawnActor<AWeaponBase>(ItemData->WeaponClass, Location, FRotator::ZeroRotator, SpawnParams);
+		if (SpawnedWeapon && Ammo >= 0)
+		{
+			if (AGunWeapon* Gun = Cast<AGunWeapon>(SpawnedWeapon))
+			{
+				Gun->SetCurrentAmmo(Ammo);
+			}
+		}
+	}
+	else
+	{
+		// 일반 아이템인 경우 WorldItemActor로 스폰하여 데이터 설정
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+
+		AWorldItemActor* Dropped = GetWorld()->SpawnActor<AWorldItemActor>(AWorldItemActor::StaticClass(), Location, FRotator::ZeroRotator, SpawnParams);
+		if (Dropped)
+		{
+			Dropped->ItemData = ItemData;
+			Dropped->Quantity = Quantity;
+			// [Metadata Inheritance] 버릴 때도 키카드 메타데이터를 유지하여 생성
+			Dropped->AssignedSlotIndex = SlotIdx;
+			Dropped->AssignedCodeNumber = CodeNum;
+			
+			// 데이터를 넣은 즉시 메쉬 업데이트 호출 (서버용)
+			Dropped->UpdateItemMesh();
+		}
+	}
+}
+
+void AQPCharacter::ServerSubmitKeypadPassword_Implementation(AQPEscapeDoor* Door, const TArray<int32>& Password)
+{
+	if (!Door) return;
+
+	// 인벤토리에 키카드가 하나라도 있는지 검사
+	bool bHasCard = false;
+	if (InventoryComponent)
+	{
+		for (const FInventorySlot& Slot : InventoryComponent->Slots)
+		{
+			if (Slot.Item.AssignedSlotIndex >= 1)
+			{
+				bHasCard = true;
+				break;
+			}
+		}
+	}
+
+	if (!bHasCard)
+	{
+		// 키카드가 없으면 문을 열 수 없다는 피드백 전송
+		if (AQPPlayerController* PC = Cast<AQPPlayerController>(GetController()))
+		{
+			if (AQPCrosshair* HUD = Cast<AQPCrosshair>(PC->GetHUD()))
+			{
+				HUD->ShowBigMessage(TEXT("탈출 키카드가 필요합니다!"), 3.f);
+			}
+		}
+		return;
+	}
+
+	// 키카드가 있다면 문 열림 시도
+	Door->SubmitPassword(Password);
+}
+
+void AQPCharacter::ServerTransferInventoryItem_Implementation(UInventoryComponent* SourceInv, UInventoryComponent* TargetInv, FIntPoint FromCell, FIntPoint ToCell)
+{
+	if (!SourceInv || !TargetInv) return;
+
+	FInventorySlot Slot;
+	if (SourceInv->FindSlotAt(FromCell, Slot))
+	{
+		int32 Qty = Slot.Item.Quantity;
+		UItemDataAsset* Data = Slot.Item.ItemData;
+		int32 SlotIdx = Slot.Item.AssignedSlotIndex;
+		int32 Code = Slot.Item.AssignedCodeNumber;
+		int32 Ammo = Slot.Item.CurrentAmmo;
+
+		if (TargetInv->AddItemAt(Data, Qty, ToCell, SlotIdx, Code, Ammo))
+		{
+			SourceInv->RemoveItemAt(FromCell);
+		}
+	}
+}
+
+void AQPCharacter::ServerDropItem_Implementation(FIntPoint Cell, FVector DropLocation)
+{
+	if (!InventoryComponent) return;
+
+	FInventorySlot Slot;
+	if (!InventoryComponent->FindSlotContaining(Cell, Slot)) return;
+	if (!Slot.Item.ItemData) return;
+
+	UItemDataAsset* ItemData = Slot.Item.ItemData;
+	int32 Quantity = Slot.Item.Quantity;
+	int32 SlotIdx = Slot.Item.AssignedSlotIndex;
+	int32 CodeNum = Slot.Item.AssignedCodeNumber;
+	int32 CurrentAmmo = Slot.Item.CurrentAmmo;
+
+	// 서버에서 아이템 스폰 (인벤토리에 저장되어 있던 잔여 탄약 수치 100% 동기화)
+	ServerSpawnWorldItem_Implementation(ItemData, Quantity, DropLocation, SlotIdx, CodeNum, CurrentAmmo);
+
+	// 서버에서 인벤토리 아이템 제거
+	InventoryComponent->RemoveItemAt(Slot.Position);
+}
+
+void AQPCharacter::ServerTryDropEquipped_Implementation()
+{
+	TryDropEquipped();
+}
+
+void AQPCharacter::InteractPressed()
+{
+
+	TArray<AActor*> OverlappingActors;
+	GetOverlappingActors(OverlappingActors);
+
+	for (AActor* Actor : OverlappingActors)
+	{
+		// 1순위: 발전기 조작 (수리 시도)
+		if (AQPEscapeGenerator* Generator = Cast<AQPEscapeGenerator>(Actor))
+		{
+			CurrentRepairingGenerator = Generator;
+			
+			// [NETWORK-FIX] 클라이언트는 서버 신뢰를 위해 캐릭터 RPC를 통함
+			if (HasAuthority()) ServerInteract_Implementation(Generator);
+			else ServerInteract(Generator);
+
+			return; 
+		}
+		
+		// 2순위: 탈출문 키패드 조작
+		if (AQPEscapeDoor* Door = Cast<AQPEscapeDoor>(Actor))
+		{
+			bool bHasKeycard = false;
+			if (InventoryComponent)
+			{
+				for (const FInventorySlot& Slot : InventoryComponent->Slots)
+				{
+					if (Slot.Item.ItemData)
+					{
+						FString ItemNameStr = Slot.Item.ItemData->ItemName.ToString();
+						if (ItemNameStr.Contains(TEXT("키카드")) || ItemNameStr.Contains(TEXT("Keycard")) || Slot.Item.AssignedSlotIndex >= 1)
+						{
+							bHasKeycard = true;
+							break;
+						}
+					}
+				}
+			}
+
+			if (!bHasKeycard)
+			{
+				if (GEngine && IsLocallyControlled())
+				{
+					GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Red, TEXT("키패드를 조작하려면 키카드가 필요합니다!"));
+				}
+				return;
+			}
+
+			if (HasAuthority()) ServerInteract_Implementation(Door);
+			else ServerInteract(Door);
+
+			ShowKeypadUI(Door);
+			return; 
+		}
+	}
+}
+
+void AQPCharacter::ServerInteract_Implementation(AActor* Target)
+{
+	if (!Target) return;
+
+	// 발전기 상호작용인 경우
+	if (AQPEscapeGenerator* Generator = Cast<AQPEscapeGenerator>(Target))
+	{
+		Generator->StartRepairing(this);
+	}
+	// 탈출문 상호작용인 경우 (필요 시 서버 측 처리 추가)
+	else if (AQPEscapeDoor* Door = Cast<AQPEscapeDoor>(Target))
+	{
+		// 서버 측 문 상호작용 로직 (현재는 UI만 띄우면 됨)
+	}
+}
+
+void AQPCharacter::InteractReleased()
+{
+	if (CurrentRepairingGenerator)
+	{
+		if (HasAuthority()) ServerStopInteract_Implementation(CurrentRepairingGenerator);
+		else ServerStopInteract(CurrentRepairingGenerator);
+
+		CurrentRepairingGenerator = nullptr;
+	}
+}
+
+void AQPCharacter::ServerStopInteract_Implementation(AActor* Target)
+{
+	if (!Target) return;
+
+	if (AQPEscapeGenerator* Generator = Cast<AQPEscapeGenerator>(Target))
+	{
+		Generator->StopRepairing(this);
+	}
+}
+
+void AQPCharacter::ShowStarCatchUI_Implementation(float StartRatio, float WidthRatio, float Duration)
+{
+	if (!StarCatchWidgetInstance && StarCatchWidgetClass)
+	{
+		StarCatchWidgetInstance = CreateWidget<UQPGeneratorWidget>(GetWorld(), StarCatchWidgetClass);
+		if (StarCatchWidgetInstance)
+		{
+			StarCatchWidgetInstance->AddToViewport();
+		}
+	}
+
+	if (StarCatchWidgetInstance)
+	{
+		StarCatchWidgetInstance->ShowSkillCheckPopup(StartRatio, WidthRatio, Duration);
+	}
+}
+
+void AQPCharacter::HideStarCatchUI_Implementation()
+{
+	if (StarCatchWidgetInstance)
+	{
+		StarCatchWidgetInstance->HideSkillCheckPopup();
+		StarCatchWidgetInstance->RemoveFromParent();
+		StarCatchWidgetInstance = nullptr;
+	}
+}
+
+void AQPCharacter::ShowKeypadUI(AQPEscapeDoor* Door)
+{
+	if (!IsLocallyControlled()) return;
+
+	if (!KeypadWidgetInstance && KeypadWidgetClass)
+	{
+		KeypadWidgetInstance = CreateWidget<UQPKeypadWidget>(GetWorld(), KeypadWidgetClass);
+	}
+
+	if (KeypadWidgetInstance)
+	{
+		KeypadWidgetInstance->SetTargetDoor(Door);
+		if (!KeypadWidgetInstance->IsInViewport())
+		{
+			KeypadWidgetInstance->AddToViewport();
+		}
+
+		// UI 진입 시 이동 키가 고장나는 현상 방지
+		if (APlayerController* PC = Cast<APlayerController>(GetController()))
+		{
+			PC->StopMovement();
+			PC->FlushPressedKeys();
+		}
+	}
+	else
+	{
+	}
+}
+
+void AQPCharacter::HideKeypadUI()
+{
+	if (!IsLocallyControlled()) return;
+
+	if (KeypadWidgetInstance && KeypadWidgetInstance->IsInViewport())
+	{
+		KeypadWidgetInstance->RemoveFromParent();
+		
+		if (APlayerController* PC = Cast<APlayerController>(GetController()))
+		{
+			FInputModeGameOnly InputMode;
+			PC->SetInputMode(InputMode);
+			PC->SetShowMouseCursor(false);
+		}
+	}
+}
+
+void AQPCharacter::OnRep_CollectedPassword()
+{
+	// 서버에서 배열이 변경되었을 때 로컬 UI도 즉시 업데이트 되도록 합니다.
+	if (InventoryComponent)
+	{
+		// 인벤토리 변경 이벤트를 수동으로 발생시켜 연동된 위젯(InventoryRootWidget 등)이 갱신되도록 합니다.
+		InventoryComponent->OnInventoryChanged.Broadcast();
+	}
+}
 
 void AQPCharacter::ServerSpawnAndEquipWeapon_Implementation(TSubclassOf<AWeaponBase> WeaponClass)
 {

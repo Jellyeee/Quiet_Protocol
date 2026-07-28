@@ -55,6 +55,7 @@ void AQPCrosshair::DrawHUD()
 		if (UQPCombatComponent* Combat = Character->FindComponentByClass<UQPCombatComponent>())
 		{
 			CrosshairSpread = Combat->GetCrosshairSpread();
+			CrosshairScreenOffset = Combat->GetCrosshairScreenOffset();
 		}
 	}
 

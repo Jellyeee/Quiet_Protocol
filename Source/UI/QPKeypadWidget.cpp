@@ -2,6 +2,7 @@
 #include "Components/TextBlock.h"
 #include "PJ_Quiet_Protocol/Environment/QPEscapeDoor.h"
 #include "Kismet/GameplayStatics.h"
+#include "PJ_Quiet_Protocol/Character/QPCharacter.h"
 
 void UQPKeypadWidget::NativeConstruct()
 {
@@ -44,7 +45,13 @@ void UQPKeypadWidget::OnSubmitClicked()
 {
 	if (TargetDoor)
 	{
-		TargetDoor->SubmitPassword(InputDigits);
+		if (APlayerController* PC = UGameplayStatics::GetPlayerController(GetWorld(), 0))
+		{
+			if (AQPCharacter* Character = Cast<AQPCharacter>(PC->GetPawn()))
+			{
+				Character->ServerSubmitKeypadPassword(TargetDoor, InputDigits);
+			}
+		}
 	}
 
 	// 제출 후에는 창을 닫음 (입력 모드 초기화 포함)

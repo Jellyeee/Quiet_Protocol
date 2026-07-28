@@ -22,7 +22,7 @@ public:
 
 	// 크로스헤어의 위치를 화면 중앙에서 얼마나 떨어뜨릴지 결정하는 변수
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crosshair")
-	FVector2D CrosshairScreenOffset = FVector2D(150.f, 150.f); // 화면 중앙으로부터의 오프셋 (양수: 우/하)
+	FVector2D CrosshairScreenOffset = FVector2D(0.f, 0.f); // 화면 중앙으로부터의 오프셋 (양수: 우/하)
 
 	// 크로스헤어의 각 부분을 나타내는 텍스처 변수들
 	UPROPERTY(EditAnywhere, Category = "Crosshair")

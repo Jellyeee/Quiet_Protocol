@@ -9,6 +9,8 @@ class UQPStatusComponent; // 전방 선언
 class UQPCombatComponent; // 전방 선언
 class AWeaponBase; // 전방 선언
 class UInventoryComponent; // 전방 선언
+class UNiagaraSystem;
+class UParticleSystem;
 
 /**
  * AQPCharacter
@@ -92,6 +94,12 @@ public:
 
 	/** 데미지 처리 (표준 TakeDamage 오버라이드) */
 	virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent, class AController* EventInstigator, AActor* DamageCauser) override;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "QP|Sound")
+	TObjectPtr<class USoundBase> HitSound;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "QP|Sound")
+	TObjectPtr<class USoundBase> DeathSound;
 
 	/** 캐릭터 사망 여부 반환 */
 	UFUNCTION(BlueprintPure, Category = "Health")
@@ -193,9 +201,9 @@ protected:
 
 	//앉기 카메라 변수들
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Crouch")
-	FVector StandingCameraOffset = FVector(0.f, 0.f, 120.f); 
+	FVector StandingCameraOffset = FVector(0.f, 60.f, 100.f); 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Crouch")
-	FVector CrouchCameraPosOffset = FVector(0.f, 0.f, 140.f); 
+	FVector CrouchCameraPosOffset = FVector(0.f, 60.f, 120.f); 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Crouch", meta = (ClampMin = "0.0"))
 	float CrouchCameraInterpSpeed = 12.f; 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera", meta = (ClampMin = "0.0"))
@@ -205,7 +213,7 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Escape", ReplicatedUsing = OnRep_CollectedPassword)
 	TArray<int32> CollectedPassword;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
-	float AimingArmLength = 200.f; 
+	float AimingArmLength = 120.f; 
 	float DefaultArmLength;
 
 	// ======================================
@@ -229,7 +237,7 @@ protected:
 	float MaxVerticalArmLength = 600.f; // 앉기 시 카메라가 너무 멀어지는 것을 방지하기 위한 최대 스프링암 길이
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Aim")
-	FVector AimingCameraOffset = FVector(0.f, 40.f, 80.f);  // 조준 시 카메라 오프셋 (앞으로, 옆으로, 위로)
+	FVector AimingCameraOffset = FVector(0.f, 70.f, 60.f);  // 조준 시 카메라 오프셋 (앞으로, 옆으로, 위로)
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Weapon", meta = (ClampMin = "0.0"))
 	float EquipTraceDistance = 250.f; //무기 장착 거리
@@ -272,6 +280,9 @@ protected:
 	void EquipSlot3(); //단축키 3 (권총)
 	void EquipSlot4(); //단축키 4 (근접무기)
 	void EquipSlot5(); //단축키 5 (수납/빈손)
+	
+	UFUNCTION()
+	void HolsterWeapon(); //무기 집어넣기 (X키)
 	void EquipWeaponByType(EQPWeaponType TargetType); //인벤토리에서 타입 찾아 퀵 장착
 	
 	void AimOffset(float DeltaTime); //에임오프셋 계산
@@ -298,7 +309,10 @@ public:
 
 	/** 월드에 존재하던 아이템 액터를 서버에서 제거 및 비밀번호 정보 수집 처리 */
 	UFUNCTION(Server, Reliable)
-	void ServerDestroyPickupActor(class AActor* PickupActor, int32 SlotIdx = -1, int32 CodeNum = -1);
+	void ServerDestroyPickupActor(class AActor* PickupActor, int32 SlotIdx = -1, int32 CodeNum = -1, FIntPoint TargetCell = FIntPoint(-1, -1));
+
+	UFUNCTION(Server, Reliable)
+	void ServerMoveInventoryItem(FIntPoint FromCell, FIntPoint ToCell);
 
 	/** 특정 클래스의 무기를 서버에서 스폰하고 장착 */
 	UFUNCTION(Server, Reliable)
@@ -306,10 +320,19 @@ public:
 
 	/** 버려진 아이템을 월드 좌표에 서버에서 생성 */
 	UFUNCTION(Server, Reliable)
-	void ServerUpdateShield(float Amount, FIntPoint ItemPos = FIntPoint(-1, -1));
+	void ServerUpdateShield(float ShieldAmount, FIntPoint TargetCell); //방어복 서버 동기화
 
 	UFUNCTION(Server, Reliable)
-	void ServerSpawnWorldItem(class UItemDataAsset* ItemData, int32 Quantity, FVector Location, int32 SlotIdx = -1, int32 CodeNum = -1);
+	void ServerUpdateHealth(float HealAmount, FIntPoint TargetCell); //회복 아이템 서버 동기화
+
+	UFUNCTION(Server, Reliable)
+	void ServerSpawnWorldItem(class UItemDataAsset* ItemData, int32 Quantity, FVector Location, int32 SlotIdx = -1, int32 CodeNum = -1, int32 Ammo = -1);
+
+	void ServerSpawnWorldItem_Implementation(class UItemDataAsset* ItemData, int32 Quantity, FVector Location, int32 SlotIdx, int32 CodeNum, int32 Ammo);
+
+	/** 인벤토리 슬롯 아이템 장착을 위한 Server RPC */
+	UFUNCTION(Server, Reliable)
+	void ServerEquipInventoryItem(FIntPoint ItemPos);
 
 	/** 장착 중인 무기를 버리는 로직을 서버에서 실행 */
 	UFUNCTION(Server, Reliable)
@@ -317,9 +340,9 @@ public:
 
 	/** 인벤토리와 무기를 안전하게 교체하기 위한 서버 요청 */
 	UFUNCTION(Server, Reliable)
-	void ServerSwapWeapon(TSubclassOf<class AWeaponBase> NewWeaponClass, bool bDropCurrent, FIntPoint TargetCell = FIntPoint(-1, -1));
+	void ServerSwapWeapon(TSubclassOf<class AWeaponBase> NewWeaponClass, bool bDropCurrent, FIntPoint TargetCell, int32 AmmoToLoad = -1);
 
-	void ServerSwapWeapon_Implementation(TSubclassOf<class AWeaponBase> NewWeaponClass, bool bDropCurrent, FIntPoint TargetCell = FIntPoint(-1, -1));
+	void ServerSwapWeapon_Implementation(TSubclassOf<class AWeaponBase> NewWeaponClass, bool bDropCurrent, FIntPoint TargetCell, int32 AmmoToLoad);
 
 	/** 클라이언트 상호작용 권한 문제 해결을 위한 서버 요청 */
 	UFUNCTION(Server, Reliable)
@@ -327,6 +350,18 @@ public:
 
 	UFUNCTION(Server, Reliable)
 	void ServerStopInteract(AActor* Target);
+
+	/** 키패드 비밀번호 제출을 위한 Server RPC */
+	UFUNCTION(Server, Reliable)
+	void ServerSubmitKeypadPassword(class AQPEscapeDoor* Door, const TArray<int32>& Password);
+
+	/** 인벤토리 컴포넌트 간 아이템 이동을 위한 Server RPC */
+	UFUNCTION(Server, Reliable)
+	void ServerTransferInventoryItem(class UInventoryComponent* SourceInv, class UInventoryComponent* TargetInv, FIntPoint FromCell, FIntPoint ToCell);
+
+	/** 아이템 지면 드롭 처리를 위한 Server RPC */
+	UFUNCTION(Server, Reliable)
+	void ServerDropItem(FIntPoint Cell, FVector DropLocation);
 
 
 
@@ -370,7 +405,7 @@ private:
 	UPROPERTY(Replicated) // [Network] 절대 조준 Yaw 값 (For Stable IK)
 	float NetAimYaw; 
 
-	UPROPERTY()
+	UPROPERTY(Replicated)
 	class AWorldItemActor* OverlappingWorldItem = nullptr; //겹쳐진 월드 아이템 액터
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Inventory", meta = (AllowPrivateAccess = "true"))
@@ -405,8 +440,17 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Health")
 	UAnimMontage* DeathMontage; // 사망 몽타주
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FX")
+	UNiagaraSystem* BloodEffectNiagara = nullptr; // 피격 시 나이아가라 혈흔 이펙트
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FX")
+	UParticleSystem* BloodEffectCascade = nullptr; // 피격 시 캐스케이드 혈흔 이펙트
+
 	UFUNCTION(NetMulticast, Reliable)
 	void MulticastDie(); // 사망 처리 전송 함수
+
+private:
+	float LastHitSoundTime = -1000.f; // 샷건 다중 페렛 소리 겹침 방지용 마지막 피격음 재생 시간
 
 	UFUNCTION()
 	void OnRep_CollectedPassword();

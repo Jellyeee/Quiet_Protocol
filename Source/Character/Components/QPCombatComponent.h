@@ -92,6 +92,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Combat|Aim")
 	FORCEINLINE float GetCrosshairSpreadMax() const { return CrosshairSpreadMax; }
 
+	UFUNCTION(BlueprintPure, Category = "Combat|Aim")
+	FORCEINLINE FVector2D GetCrosshairScreenOffset() const { return CrosshairScreenOffset; }
+
 	UFUNCTION(BlueprintPure, Category = "Combat|Wait")
 	FVector GetMuzzleHitTarget() const; // 실제 총구가 가리키는 위치 반환
 	
@@ -142,6 +145,9 @@ protected:
 
 	UFUNCTION(NetMulticast, Unreliable)
 	void MulticastFire(bool bInIsAiming); // 발사 효과 동기화용 함수 (모든 클라이언트에서 발사 효과 재생, Unreliable로 설정)
+
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastUnEquipWeapon(class AWeaponBase* WeaponToUnEquip, bool bDropToWorld); // 무기 장착 해제 및 물리 효과 동기화
 
 public:
 	UFUNCTION(Server, Reliable)
@@ -201,23 +207,38 @@ private:
 
 	// Crosshair Offsets (Hip-Fire)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Aim|Crosshair", meta = (AllowPrivateAccess = "true"))
-	FVector2D HipFireCenterOffset = FVector2D(150.f, 120.f); // 정면
+	FVector2D HipFireCenterOffset = FVector2D(0.f, 0.f); // 정면
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Aim|Crosshair", meta = (AllowPrivateAccess = "true"))
-	FVector2D HipFireUpOffset = FVector2D(150.f, 120.f); // 위를 볼 때
+	FVector2D HipFireUpOffset = FVector2D(0.f, 0.f); // 위를 볼 때
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Aim|Crosshair", meta = (AllowPrivateAccess = "true"))
-	FVector2D HipFireDownOffset = FVector2D(150.f, 120.f); // 아래를 볼 때
+	FVector2D HipFireDownOffset = FVector2D(0.f, 0.f); // 아래를 볼 때
 
 	// Crosshair Offsets (Aiming)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Aim|Crosshair", meta = (AllowPrivateAccess = "true"))
-	FVector2D AimingBaseOffset = FVector2D(150.f,  120.f); // 조준 시 기본 위치
+	FVector2D AimingBaseOffset = FVector2D(0.f, 0.f); // 조준 시 기본 위치
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Aim|Crosshair", meta = (AllowPrivateAccess = "true"))
-	float AimingVerticalScale = 50.f; // 조준 시 Pitch에 따른 수직 이동 비율
+	float AimingVerticalScale = 0.f; // 조준 시 Pitch에 따른 수직 이동 비율
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Aim|Crosshair", meta = (AllowPrivateAccess = "true"))
-	float CrouchCrosshairOffset = 30.f; // 앉아 있을 때 크로스헤어 수직 오프셋 (양수: 아래로, 음수: 위로)
+	float CrouchCrosshairOffset = 0.f; // 앉아 있을 때 크로스헤어 수직 오프셋 (양수: 아래로, 음수: 위로)
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Aim|Crosshair", Replicated, meta = (AllowPrivateAccess = "true"))
+	float CrosshairSpread = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Aim|Crosshair", meta = (AllowPrivateAccess = "true"))
+	float CrosshairSpreadMax = 16.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Aim|Crosshair", meta = (AllowPrivateAccess = "true"))
+	float CrosshairVelocityFactor = 2.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Aim|Crosshair", meta = (AllowPrivateAccess = "true"))
+	float CrosshairInAirFactor = 2.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Aim|Crosshair", meta = (AllowPrivateAccess = "true"))
+	float CrosshairShootingFactor = 2.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Aim|Crosshair", Replicated, meta = (AllowPrivateAccess = "true"))
 	float CrosshairSpread = 0.f;

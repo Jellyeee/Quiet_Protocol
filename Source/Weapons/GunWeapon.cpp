@@ -52,6 +52,9 @@ void AGunWeapon::BeginPlay()
 	}
 
 	CurrentAmmo = MagCapacity;
+
+	// 탄피 풀 초기화 (로컬 클라이언트/리슨 서버 전용)
+	InitializeCasingPool();
 }
 
 void AGunWeapon::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -146,17 +149,17 @@ void AGunWeapon::FireSinglePellet()
 	if (!CombatComponent) return;
 
 	/** 화면 중앙(크로스헤어)이 가리키는 월드 좌표 */
-	const FVector TraceEnd = CombatComponent->HitTarget;
+	FVector TraceEnd = CombatComponent->HitTarget;
 	const float CombatSpread = CombatComponent->GetCrosshairSpread(); // [Add] 현재 동적 확산 값 가져오기
 
-	// 2. 총구 위치(Muzzle) 계산
+	// 2. 총구 위치(Muzzle) 계산 (타격감을 위해 다시 총구에서 스폰)
 	FVector MuzzleLocation = GetActorLocation(); 
 	if (WeaponMesh && WeaponMesh->DoesSocketExist(MuzzleSocketName))
 	{
 		MuzzleLocation = WeaponMesh->GetSocketLocation(MuzzleSocketName); 
 	}
 
-	// 3. 발사 방향 계산
+	// 3. 발사 방향 계산 (총구 -> 화면 중앙 크로스헤어 조준점 TraceEnd)
 	const FVector BaseBulletDir = (TraceEnd - MuzzleLocation).GetSafeNormal();
 	FVector FinalBulletDir = BaseBulletDir;
 
@@ -180,6 +183,54 @@ void AGunWeapon::FireSinglePellet()
 
 	// 4. 사거리 제한을 적용한 최종 타겟 위치 (필요시 트레이스 용도로 활용 가능)
 	FVector FinalTarget = MuzzleLocation + (FinalBulletDir * CurrentRange);
+
+	// [Point-Blank Check] 초근접(영거리) 사격 보정
+	// 플레이어 카메라/가슴부터 총구 앞 범위 내에 적(좀비/타 플레이어)이 밀착해 있는 경우,
+	// 총알이 총구 끝에서 스폰되어 적의 뒤쪽으로 발사되는 현상을 방지
+	FHitResult PointBlankHit;
+	FCollisionQueryParams PBParams(SCENE_QUERY_STAT(PointBlankCheck), false);
+	PBParams.AddIgnoredActor(this);
+	PBParams.AddIgnoredActor(OwnerCharacter);
+
+	FVector CameraLoc;
+	FRotator CameraRot;
+	if (OwnerCharacter->GetController())
+	{
+		OwnerCharacter->GetController()->GetPlayerViewPoint(CameraLoc, CameraRot);
+	}
+	else
+	{
+		CameraLoc = OwnerCharacter->GetActorLocation();
+	}
+
+	const FVector PBStart = CameraLoc;
+	const FVector PBEnd = MuzzleLocation + (FinalBulletDir * 100.f);
+
+	bool bPointBlankHit = GetWorld()->LineTraceSingleByChannel(
+		PointBlankHit,
+		PBStart,
+		PBEnd,
+		ECC_Pawn,
+		PBParams
+	);
+
+	if (bPointBlankHit && PointBlankHit.GetActor() && PointBlankHit.GetActor() != OwnerCharacter)
+	{
+		if (OwnerCharacter->HasAuthority())
+		{
+			UGameplayStatics::ApplyPointDamage(
+				PointBlankHit.GetActor(),
+				BaseDamage,
+				FinalBulletDir,
+				PointBlankHit,
+				OwnerCharacter->GetController(),
+				this,
+				DamageTypeClass
+			);
+		}
+		// 총알 스폰 위치를 히트 지점 근처로 조정하여 타격 효과가 즉시 발동되도록 설정
+		MuzzleLocation = PointBlankHit.ImpactPoint - (FinalBulletDir * 15.f);
+	}
 
 	// 5. 서버/클라이언트 공통 투사체 스폰 로직
 	FActorSpawnParameters SpawnParams; 
@@ -207,4 +258,66 @@ void AGunWeapon::AddAmmo(int32 AmountToAdd)
 void AGunWeapon::SpendRound()
 {
 	CurrentAmmo = FMath::Clamp(CurrentAmmo - 1, 0, MagCapacity);
+}
+
+void AGunWeapon::InitializeCasingPool()
+{
+	if (!CasingClass) return; // 블루프린트에서 클래스가 할당되지 않았으면 무시
+
+	// 데디케이티드 서버에서는 비주얼적인 탄피를 스폰할 필요가 없음 (최적화)
+	if (GetNetMode() == NM_DedicatedServer) return;
+
+	for (int32 i = 0; i < CasingPoolSize; ++i)
+	{
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		
+		// 보이지 않는 위치에 임시 생성
+		AQPCasing* NewCasing = GetWorld()->SpawnActor<AQPCasing>(CasingClass, FVector::ZeroVector, FRotator::ZeroRotator, SpawnParams);
+		if (NewCasing)
+		{
+			CasingPool.Add(NewCasing);
+		}
+	}
+}
+
+AQPCasing* AGunWeapon::GetAvailableCasing()
+{
+	for (AQPCasing* Casing : CasingPool)
+	{
+		if (Casing && !Casing->bIsActive)
+		{
+			return Casing;
+		}
+	}
+	
+	// 모든 탄피가 활성화되어 있다면 가장 앞쪽의 탄피를 강제로 재사용 (오래된 탄피)
+	if (CasingPool.Num() > 0 && CasingPool[0])
+	{
+		AQPCasing* OldestCasing = CasingPool[0];
+		CasingPool.RemoveAt(0);
+		CasingPool.Add(OldestCasing); // 끝으로 보냄
+		return OldestCasing;
+	}
+	return nullptr; 
+}
+
+void AGunWeapon::EjectCasing()
+{
+	// 데디케이티드 서버는 무시
+	if (GetNetMode() == NM_DedicatedServer) return;
+	
+	if (!WeaponMesh || !WeaponMesh->DoesSocketExist(AmmoEjectSocketName)) return;
+
+	AQPCasing* Casing = GetAvailableCasing();
+	if (Casing)
+	{
+		FTransform SocketTransform = WeaponMesh->GetSocketTransform(AmmoEjectSocketName);
+		
+		// 현재 무기의 속도(캐릭터의 이동 속도 등)를 탄피에 더해줌으로써 자연스러운 물리 연출
+		FVector Velocity = GetVelocity();
+		if (GetOwner()) Velocity = GetOwner()->GetVelocity();
+
+		Casing->ActivateCasing(SocketTransform, Velocity);
+	}
 }

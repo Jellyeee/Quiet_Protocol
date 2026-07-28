@@ -60,15 +60,57 @@ void UQPAniminstance::NativeUpdateAnimation(float DeltaSeconds)
 			// 캐릭터의 로컬 좌표계 기준으로 속도 벡터 변환
 			FVector LocalVelocity = ActorRotation.UnrotateVector(Velocity);
 			float TargetDirection = LocalVelocity.Rotation().Yaw;
+
+			// -180 ~ 180의 각도를 0 ~ 360으로 변환 (블렌드 스페이스 꼬임 방지)
+			if (TargetDirection < 0.f)
+			{
+				TargetDirection += 360.f;
+			}
+
+			// 방향 전환 시의 떨림 방지를 위해 보간(Interp) 적용
+			// 방향 보간 시 원형(Circular) 각도 특성을 고려하여 RInterpTo 사용 후 0~360 클램프
 			FRotator CurrentRot = FRotator(0.f, Direction, 0.f);
 			FRotator TargetRot = FRotator(0.f, TargetDirection, 0.f);
-			// 방향 전환 시의 떨림 방지를 위해 보간(Interp) 적용
 			Direction = FMath::RInterpTo(CurrentRot, TargetRot, DeltaSeconds, 6.0f).Yaw;
+			if (Direction < 0.f)
+			{
+				Direction += 360.f;
+			}
+
+			// [2-1] 4방향 스냅(Snap) 각도 계산 (LocomotionDirection)
+			// 전방 판정을 넓혀 대각선 이동 시 대칭 확보
+			float TargetLocomotion = 0.f;
+			if (TargetDirection > 310.f || TargetDirection <= 50.f)
+			{
+				TargetLocomotion = 0.f; // 전방 걷기
+			}
+			else if (TargetDirection > 50.f && TargetDirection <= 130.f)
+			{
+				TargetLocomotion = 90.f; // 우측 게걸음
+			}
+			else if (TargetDirection > 130.f && TargetDirection <= 230.f)
+			{
+				TargetLocomotion = 180.f; // 후방 걷기
+			}
+			else if (TargetDirection > 230.f && TargetDirection <= 310.f)
+			{
+				TargetLocomotion = 270.f; // 좌측 게걸음
+			}
+
+			// 스냅 각도 보간 (선택사항이나, 블렌드 스페이스 내에서 모션이 튀지 않게 부드럽게 넘겨줌)
+			FRotator CurrentLocoRot = FRotator(0.f, LocomotionDirection, 0.f);
+			FRotator TargetLocoRot = FRotator(0.f, TargetLocomotion, 0.f);
+			LocomotionDirection = FMath::RInterpTo(CurrentLocoRot, TargetLocoRot, DeltaSeconds, 8.0f).Yaw;
+			if (LocomotionDirection < 0.f)
+			{
+				LocomotionDirection += 360.f;
+			}
 		}
 	}
 	else
 	{
 		Direction = 0.f;
+		LocomotionDirection = 0.f;
 	}
 
 	// [3] 무브먼트 컴포넌트 데이터 확인 (공중 부양, 가속 중 등)
@@ -271,7 +313,8 @@ void UQPAniminstance::NativeUpdateAnimation(float DeltaSeconds)
 	}
 	else
 	{
-		float TargetAlpha = (WeaponType == EQPWeaponType::EWT_None || bIsReloading || bIsSprinting) ? 0.f : 1.f;
+		// 근접 무기(EWT_Melee) 또는 비무장, 장전, 질주 중일 때는 왼손 IK를 0으로 해제하여 팔 꼬임 방지
+		float TargetAlpha = (WeaponType == EQPWeaponType::EWT_None || WeaponType == EQPWeaponType::EWT_Melee || bIsReloading || bIsSprinting) ? 0.f : 1.f;
 		LeftHandIKAlpha = FMath::FInterpTo(LeftHandIKAlpha, TargetAlpha, DeltaSeconds, 15.f);
 	}
 

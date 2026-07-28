@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "WeaponBase.h"
 #include "TimerManager.h"
+#include "QPCasing.h"
 #include "GunWeapon.generated.h"
 
 /**
@@ -29,6 +30,10 @@ public:
 	/** 현재 남은 장탄수 반환 */
 	UFUNCTION(BlueprintPure, Category = "Weapon|Gun|Ammo")
 	FORCEINLINE int32 GetCurrentAmmo() const { return CurrentAmmo; }
+
+	/** 현재 남은 장탄수 직접 설정 */
+	UFUNCTION(BlueprintCallable, Category = "Weapon|Gun|Ammo")
+	FORCEINLINE void SetCurrentAmmo(int32 NewAmmo) { CurrentAmmo = FMath::Clamp(NewAmmo, 0, MagCapacity); }
 
 	/** 최대 장탄수(탄창 용량) 반환 */
 	UFUNCTION(BlueprintPure, Category = "Weapon|Gun|Ammo")
@@ -84,6 +89,33 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Gun|Projectile")
 	FName MuzzleSocketName = TEXT("MuzzleSocket"); 
 	
+	// ======================================
+	// 탄피 (Casing) 설정 및 풀링
+	// ======================================
+	
+	/** 탄피가 배출될 소켓 이름 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Gun|Casing")
+	FName AmmoEjectSocketName = TEXT("AmmoEject"); 
+
+	/** 스폰할 탄피 액터 클래스 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Gun|Casing")
+	TSubclassOf<class AQPCasing> CasingClass;
+
+	/** 미리 생성할 탄피 개수 (오브젝트 풀링) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Gun|Casing")
+	int32 CasingPoolSize = 10;
+
+	/** 생성된 탄피들을 담아두는 배열 (오브젝트 풀) */
+	UPROPERTY()
+	TArray<class AQPCasing*> CasingPool;
+
+	void InitializeCasingPool(); // 탄피 풀 초기화 함수
+	class AQPCasing* GetAvailableCasing(); // 풀에서 사용 가능한 탄피 가져오기
+
+public:
+	void EjectCasing(); // 실제 탄피 배출 실행 (클라이언트 전용)
+
+protected:
 	// ======================================
 	// 샷건(Shotgun) 전용 설정
 	// ======================================

@@ -67,13 +67,24 @@ FReply UItemIconWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, con
 
 		APlayerController* PlayerController = GetOwningPlayer();
 		if (!PlayerController) return FReply::Handled();
-		float X = 0.f, Y = 0.f;
-		if(PlayerController->GetMousePosition(X, Y))
+
+		FVector2D MousePosition = UWidgetLayoutLibrary::GetMousePositionOnViewport(GetWorld());
+		FVector2D Alignment(0.f, 0.f);
+
+		FVector2D ViewportSize = UWidgetLayoutLibrary::GetViewportSize(GetWorld());
+
+		// 메뉴 위젯의 예상 크기(여유분)를 150px 정도로 잡고 짤림 방지
+		if (MousePosition.X > ViewportSize.X - 150.f)
 		{
-			const FVector2D MousePosition(X, Y);
-			OpenedMenu->SetPositionInViewport(MousePosition, false);
+			Alignment.X = 1.f;
+		}
+		if (MousePosition.Y > ViewportSize.Y - 150.f)
+		{
+			Alignment.Y = 1.f;
 		}
 
+		OpenedMenu->SetAlignmentInViewport(Alignment);
+		OpenedMenu->SetPositionInViewport(MousePosition, false);
 		OpenedMenu->SetKeyboardFocus();
 		return FReply::Handled();
 	}

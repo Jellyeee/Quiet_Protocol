@@ -124,6 +124,6 @@ bool AZombieSpawner::FindSpawnLocation(FVector& OutLocation) const
 	const bool bFoundNavLocation = NavSys->GetRandomPointInNavigableRadius(RandomPointInBox, NavSearchRadius, NavLocation);
 
 	if (!bFoundNavLocation) return false;
-	OutLocation = NavLocation.Location;
+	OutLocation = NavLocation.Location + FVector(0.f, 0.f, 90.f); // 바닥 파묻힘/KillZ 낙하사 방지를 위한 Z축 높이 보정
 	return true;
 }

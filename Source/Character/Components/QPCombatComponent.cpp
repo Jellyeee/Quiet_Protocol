@@ -2,6 +2,7 @@
 #include "GameFramework/Character.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "PJ_Quiet_Protocol/Weapons/WeaponBase.h"
+#include "PJ_Quiet_Protocol/Audio/QPAudioSubsystem.h"
 #include "PJ_Quiet_Protocol/Weapons/GunWeapon.h"
 #include "PJ_Quiet_Protocol/Character/QPCharacter.h"
 #include "PJ_Quiet_Protocol/Inventory/InventoryComponent.h"
@@ -23,7 +24,9 @@ UQPCombatComponent::UQPCombatComponent()
 	HitTarget = FVector::ZeroVector;
 	TraceHitTarget = FVector::ZeroVector;
 	LastHitTarget = FVector::ZeroVector;
-	CrosshairScreenOffset = FVector2D::ZeroVector;
+	CrosshairScreenOffset = FVector2D(-100.f, 0.f);
+	HipFireCenterOffset = FVector2D(-100.f, 0.f);
+	AimingBaseOffset = FVector2D(-100.f, 0.f);
 
 	SetIsReplicatedByDefault(true); // 컴포넌트 리플리케이션 활성화
 }
@@ -229,6 +232,10 @@ void UQPCombatComponent::OnRep_EquippedWeapon() //서버에서 EquippedWeapon이
 		AttachWeaponToCharacter(EquippedWeapon);
 		SetWeaponType(EquippedWeapon->GetWeaponType());
 	}
+	else
+	{
+		SetWeaponType(EQPWeaponType::EWT_None);
+	}
 }
 
 bool UQPCombatComponent::EquipWeapon(AWeaponBase* NewWeapon, bool bUnequipCurrent) 
@@ -264,12 +271,21 @@ bool UQPCombatComponent::UnEquipWeapon(bool bDropToWorld)
 	}
 	StopAttack(); //공격 중지
 
-	EquippedWeapon->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform); //월드 트랜스폼 유지하며 분리
-	EquippedWeapon->OnUnequipped(bDropToWorld); //무기 해제 처리 호출
+	MulticastUnEquipWeapon(EquippedWeapon, bDropToWorld); // 서버 및 클라이언트 모두에서 물리 및 충돌 활성화
+
 	EquippedWeapon = nullptr; //장착된 무기 초기화
 
 	SetWeaponType(EQPWeaponType::EWT_None); //무기 타입 없음으로 설정
 	return true; //성공적으로 해제했으므로 true 반환
+}
+
+void UQPCombatComponent::MulticastUnEquipWeapon_Implementation(AWeaponBase* WeaponToUnEquip, bool bDropToWorld)
+{
+	if (WeaponToUnEquip)
+	{
+		WeaponToUnEquip->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+		WeaponToUnEquip->OnUnequipped(bDropToWorld);
+	}
 }
 
 //서버에서 클라이언트로 무기 장착 요청 처리 함수 구현
@@ -604,10 +620,30 @@ void UQPCombatComponent::MulticastFire_Implementation(bool bInIsAiming)
 	{
 		QPChar->PlayFireMontage(bInIsAiming); //조준 상태에 따라 발사 몽타주 재생
 
-		// 로컬 조작 플레이어인 경우에만 카메라 반동(Recoil) 적용
-		if (QPChar->IsLocallyControlled())
+		if (EquippedWeapon && EquippedWeapon->GetFireSound())
 		{
-			if (AGunWeapon* Gun = Cast<AGunWeapon>(EquippedWeapon))
+			float VolumeMultiplier = 1.0f;
+			if (UWorld* World = GetWorld())
+			{
+				if (UGameInstance* GI = World->GetGameInstance())
+				{
+					if (UQPAudioSubsystem* AudioSubsystem = GI->GetSubsystem<UQPAudioSubsystem>())
+					{
+						VolumeMultiplier = AudioSubsystem->GetSFXVolume() * AudioSubsystem->GetMasterVolume();
+					}
+				}
+			}
+
+			UGameplayStatics::PlaySoundAtLocation(this, EquippedWeapon->GetFireSound(), EquippedWeapon->GetActorLocation(), VolumeMultiplier);
+		}
+
+		if (AGunWeapon* Gun = Cast<AGunWeapon>(EquippedWeapon))
+		{
+			// [Visual] 탄피 배출 (모든 클라이언트의 화면에서 각각 로컬 물리 연산으로 처리됨)
+			Gun->EjectCasing();
+
+			// 로컬 조작 플레이어인 경우에만 카메라 반동(Recoil) 적용
+			if (QPChar->IsLocallyControlled())
 			{
 				float PitchRecoil = FMath::RandRange(Gun->GetRecoilPitchMin(), Gun->GetRecoilPitchMax());
 				float YawRecoil = FMath::RandRange(Gun->GetRecoilYawMin(), Gun->GetRecoilYawMax());
@@ -639,7 +675,25 @@ bool UQPCombatComponent::AttachWeaponToCharacter(AWeaponBase* Weapon)
 	if (!OwnerCharacter || !Weapon) return false; //소유한 캐릭터나 무기가 유효하지 않으면 false 반환
 	USkeletalMeshComponent* MeshComponent = OwnerCharacter->GetMesh(); //캐릭터의 스켈레탈 메쉬 컴포넌트 가져오기
 	if (!MeshComponent) return false; //메쉬 컴포넌트가 유효하지 않으면 false 반환
-	Weapon->AttachToComponent(MeshComponent, FAttachmentTransformRules::SnapToTargetIncludingScale, EquipSocketName); //무기를 캐릭터 메쉬에 부착
+
+	FName SocketToUse = Weapon->GetPreferredAttachSocketName();
+	if (SocketToUse == NAME_None || !MeshComponent->DoesSocketExist(SocketToUse))
+	{
+		SocketToUse = EquipSocketName; // 기본 무기 소켓 사용
+	}
+
+	Weapon->AttachToComponent(MeshComponent, FAttachmentTransformRules::SnapToTargetIncludingScale, SocketToUse); //무기를 캐릭터 메쉬에 부착
+	
+	// 무기별 개별 오프셋이 설정되어 있는 경우 상대 위치 및 회전 적용
+	if (!Weapon->GetAttachRelativeLocation().IsZero())
+	{
+		Weapon->SetActorRelativeLocation(Weapon->GetAttachRelativeLocation());
+	}
+	if (!Weapon->GetAttachRelativeRotation().IsZero())
+	{
+		Weapon->SetActorRelativeRotation(Weapon->GetAttachRelativeRotation());
+	}
+
 	return true; //성공적으로 부착했으므로 true 반환
 }
 

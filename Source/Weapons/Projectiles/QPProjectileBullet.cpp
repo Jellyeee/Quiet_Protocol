@@ -20,7 +20,7 @@ AQPProjectileBullet::AQPProjectileBullet()
 
 	ProjectileMovement = CreateDefaultSubobject<UProjectileMovementComponent>(TEXT("ProjectileMovement"));
 	ProjectileMovement->bRotationFollowsVelocity = true;
-	ProjectileMovement->ProjectileGravityScale = 1.0f;
+	ProjectileMovement->ProjectileGravityScale = 0.0f; // [Fix] 중력 제거 (하탄 방지)
 
 	BulletMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("BulletMesh"));
 	BulletMesh->SetupAttachment(RootComponent);
@@ -72,7 +72,7 @@ void AQPProjectileBullet::BeginPlay()
 	if (AActor* OwnerActor = GetOwner())
 	{
 		/** 
-		 * 발사 직후 총알이 발사한 캐릭터(Owner)의 캡슐이나 메시와 충돌하여 
+		 * 발사 직후 총알이 발사한 캐릭터(Owner) 및 무기 액터와 충돌하여 
 		 * 제자리에서 터지는 것을 방지하기 위해 양방향으로 충돌을 무시하도록 설정합니다.
 		 */
 		BulletCollision->IgnoreActorWhenMoving(OwnerActor, true); 
@@ -82,6 +82,24 @@ void AQPProjectileBullet::BeginPlay()
 		{
 			BulletCollision->IgnoreComponentWhenMoving(Comp, true);
 			Comp->IgnoreComponentWhenMoving(BulletCollision, true); 
+		}
+
+		// [Fix] 장착 중인 무기 액터 및 부착물도 충돌 무시 대상에 추가하여 제자리 소멸 방지
+		TArray<AActor*> AttachedActors;
+		OwnerActor->GetAttachedActors(AttachedActors);
+		for (AActor* Attached : AttachedActors)
+		{
+			if (Attached)
+			{
+				BulletCollision->IgnoreActorWhenMoving(Attached, true);
+				TArray<UPrimitiveComponent*> AttComps;
+				Attached->GetComponents(AttComps);
+				for (UPrimitiveComponent* AttComp : AttComps)
+				{
+					BulletCollision->IgnoreComponentWhenMoving(AttComp, true);
+					AttComp->IgnoreComponentWhenMoving(BulletCollision, true);
+				}
+			}
 		}
 	}
 	if (APawn* InstigatorPawn = GetInstigator())

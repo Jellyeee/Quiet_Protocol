@@ -7,6 +7,7 @@ AWeaponBase::AWeaponBase()
 {
 	PrimaryActorTick.bCanEverTick = false;
 	bReplicates = true;
+	SetReplicatingMovement(true); // 추가: 물리 드랍 시 움직임 동기화
 	WeaponMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("WeaponMesh"));
 	SetRootComponent(WeaponMesh);
 
@@ -34,6 +35,7 @@ void AWeaponBase::OnEquipped(ACharacter* NewOwner)
 	SetOwner(Cast<APawn>(NewOwner));
 	SetInstigator(Cast<APawn>(NewOwner));
 	SetActorEnableCollision(false);
+	SetReplicatingMovement(false); // 장착 중에는 불필요한 독립적 이동 동기화를 꺼서 부착 텔레포트 오류 방지
 
 	if (WeaponMesh) {
 		WeaponMesh->SetSimulatePhysics(false);
@@ -53,14 +55,17 @@ void AWeaponBase::OnUnequipped(bool bDropToWorld)
 	if (!WeaponMesh) return;
 	SetActorEnableCollision(bDropToWorld);
 	if (bDropToWorld) {
+		SetReplicatingMovement(true); // 바닥에 떨어질 때는 물리 동기화를 위해 다시 켬
 		WeaponMesh->SetSimulatePhysics(true);
 		WeaponMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 		WeaponMesh->SetCollisionObjectType(ECollisionChannel::ECC_WorldDynamic);
 		WeaponMesh->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Ignore);
 		WeaponMesh->SetCollisionResponseToChannel(ECollisionChannel::ECC_WorldStatic, ECollisionResponse::ECR_Block);
-		WeaponMesh->SetCollisionResponseToChannel(ECollisionChannel::ECC_WorldDynamic, ECollisionResponse::ECR_Block);
 		WeaponMesh->SetCollisionResponseToChannel(ECollisionChannel::ECC_Visibility, ECollisionResponse::ECR_Block);
-		WeaponMesh->SetCollisionResponseToChannel(ECollisionChannel::ECC_Pawn, ECollisionResponse::ECR_Overlap);
+		
+		// 튕겨져 날아가는 것을 방지하기 위해 마찰/저항(Damping)을 매우 강하게 설정
+		WeaponMesh->SetLinearDamping(5.0f);
+		WeaponMesh->SetAngularDamping(5.0f);
 		WeaponMesh->SetGenerateOverlapEvents(true);
 	}
 	else {
